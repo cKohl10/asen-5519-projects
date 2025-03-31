@@ -7,12 +7,14 @@ class Vehicle:
     def __init__(self):
         self.state_history = []
         self.time_history = []
+        self.control_history = []
         self.current_time = 0
         self.state_names = []
 
     def reset(self):
         self.state_history = []
         self.time_history = []
+        self.control_history = []
         self.current_time = 0
 
     def step(self, policy):
@@ -32,33 +34,50 @@ class Vehicle:
         figsize : tuple, optional
             Figure size (width, height) in inches
         """
-        if len(self.state_history) == 0:
-            print("No state history to plot.")
+        if len(self.state_history) == 0 or len(self.control_history) == 0:
+            print("No history data to plot.")
             return
             
         # Convert history lists to numpy arrays for easier manipulation
         states = np.array(self.state_history)
+        controls = np.array(self.control_history)
         times = np.array(self.time_history)
         
-        # Get number of state variables
+        # Get number of state and control variables
         n_states = states.shape[1]
-        
-        # Create subplots, one for each state variable
-        fig, axes = plt.subplots(n_states, 1, figsize=figsize, sharex=True)
+        n_controls = controls.shape[1]
+
+        # Create figure for states
+        fig_states, axes_states = plt.subplots(n_states, 1, figsize=figsize, sharex=True)
         if n_states == 1:
-            axes = [axes]  # Make sure axes is iterable even with one subplot
+            axes_states = [axes_states]
             
         # Plot each state variable
         for i in range(n_states):
-            axes[i].plot(times, states[:, i])
-            axes[i].set_ylabel(self.state_names[i])
-            axes[i].grid(True)
+            axes_states[i].plot(times, states[:, i])
+            axes_states[i].set_ylabel(self.state_names[i])
+            axes_states[i].grid(True)
             
-        # Add labels and title
-        axes[-1].set_xlabel('Time')
-        if title:
-            fig.suptitle(title)
+        # Add labels and title for states
+        axes_states[-1].set_xlabel('Time')
+        fig_states.suptitle("States" if not title else f"States - {title}")
         
+        # Create separate figure for controls
+        fig_controls, axes_controls = plt.subplots(n_controls, 1, figsize=figsize, sharex=True)
+        if n_controls == 1:
+            axes_controls = [axes_controls]
+            
+        # Plot each control variable with orange lines
+        # Use times[1:] because controls are applied BETWEEN states
+        for j in range(n_controls):
+            axes_controls[j].plot(times[1:], controls[:, j], color='orange')
+            axes_controls[j].set_ylabel(f'Control {j+1}')
+            axes_controls[j].grid(True)
+            
+        # Add labels and title for controls
+        axes_controls[-1].set_xlabel('Time')
+        fig_controls.suptitle("Controls" if not title else f"Controls - {title}")
+
         plt.tight_layout()
 
 class MassSpringDamper(Vehicle):
@@ -132,6 +151,7 @@ class MassSpringDamper(Vehicle):
 
         # Get the action from the policy
         u = policy.get_action(self.s, t)
+        self.control_history.append(u.copy())
 
         # Step the dynamics
         sdot = self.A @ self.s + self.B @ u
