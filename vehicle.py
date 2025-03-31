@@ -60,14 +60,13 @@ class Vehicle:
             fig.suptitle(title)
         
         plt.tight_layout()
-        plt.show()
 
 class MassSpringDamper(Vehicle):
     def __init__(self, s0, p):
         super().__init__()
         self.s0 = s0
         self.s = self.s0
-        self.state_names = ['x1', 'x2', 'Fk1', 'Fk2']
+        self.state_names = ['x1', 'x2', 'v1', 'v2', 'Fk1', 'Fk2'] # x1 and x2 are the positions of the masses, v1 and v2 are the velocities of the masses, Fk1 and Fk2 are the forces exerted by the springs
         
         # Constants for the system (these should be defined before using them in A and B)
         self.M1 = p[0]  # mass 1
@@ -75,20 +74,28 @@ class MassSpringDamper(Vehicle):
         self.K1 = p[2]  # spring constant 1
         self.K2 = p[3]  # spring constant 2
         self.B = p[4]  # damping constant
+        self.r = p[5]  # radius of the masses
+        self.COR = p[6]  # Coefficient of restitution [0,1]
 
         # Underlying Dynamics
-        self.A = np.array([[-1/self.M1, 0, -self.B/self.M1, self.B/self.M1],
-                       [0, 0, 0, -1/self.M2],
-                       [self.K1, 0, 0, 0],
-                       [-self.K2, self.K2, 0, 0]])
+        self.A = np.array([ [0,0,1,0,0,0],
+                            [0,0,0,1,0,0],
+                            [0,0,-self.B/self.M1, 0, -1/self.M1, 1/self.M1],
+                            [0,0, 0, 0, 0, -1/self.M2],
+                            [0,0,self.K1, 0, 0, 0],
+                            [0,0,-self.K2, self.K2, 0, 0]])
         
-        self.B = np.array([[0, 1/self.M1],
-                      [1/self.M2, 0],
-                      [0, -self.K1],
-                      [0, 0]])
+        self.B = np.array([ [0,0],
+                            [0,0],
+                            [0, -self.B/self.M1],
+                            [1/self.M2, 0],
+                            [0, -self.K1],
+                            [0, 0]])
+
+        # Underlying Dynamics
         
-        self.C = np.eye(4)
-        self.D = np.zeros((4, 2))
+        self.C = np.eye(6)
+        self.D = np.zeros((6, 2))
         
         # Initialize history with initial state
         self.state_history.append(self.s0.copy())
@@ -100,9 +107,31 @@ class MassSpringDamper(Vehicle):
         self.state_history.append(self.s.copy())
         self.time_history.append(self.current_time)
 
-    def step(self, policy, dt):
+    def step(self, policy, dt, t):
+
+        # Check for collisions with velocity direction consideration
+        x1, x2 = self.s[0], self.s[1]
+        v1, v2 = self.s[2], self.s[3]
+        
+        if np.abs(x1 - x2) < 2*self.r and (v2 - v1) < 0:  # Only collide when approaching
+            # Calculate new velocities using physics of collisions
+            m1, m2 = self.M1, self.M2
+            e = self.COR
+            
+            # Conservation of momentum with COR
+            new_v1 = ((m1 - e*m2)*v1 + (1 + e)*m2*v2) / (m1 + m2)
+            new_v2 = ((1 + e)*m1*v1 + (m2 - e*m1)*v2) / (m1 + m2)
+            
+            self.s[2] = new_v1
+            self.s[3] = new_v2
+
+        if x1 <= self.r and v1 <= 0:
+            self.s[2] = -self.s[2]
+        if x2 <= self.r and v2 <= 0:
+            self.s[3] = -self.s[3]
+
         # Get the action from the policy
-        u = policy.get_action(self.s)
+        u = policy.get_action(self.s, t)
 
         # Step the dynamics
         sdot = self.A @ self.s + self.B @ u
@@ -120,7 +149,7 @@ class MassSpringDamper(Vehicle):
         # Return the next state
         return self.s
     
-    def animate(self):
+    def animate(self, save_path=None):
         # This problem is two masses connected by springs and dampers.
         # x1 and x2 are the positions of the masses.
         if len(self.state_history) == 0:
@@ -135,56 +164,73 @@ class MassSpringDamper(Vehicle):
         x1_positions = states[:, 0]  # First mass position
         x2_positions = states[:, 1]  # Second mass position
         
-        # Determine the range for plotting
-        min_pos = min(np.min(x1_positions), np.min(x2_positions)) - 1
-        max_pos = max(np.max(x1_positions), np.max(x2_positions)) + 1
+        # Determine the range for plotting, accounting for the mass radius
+        min_pos = min(np.min(x1_positions), np.min(x2_positions)) - self.r - 1
+        max_pos = max(np.max(x1_positions), np.max(x2_positions)) + self.r + 1
         
-        # Set up the figure and axis
+        # Set up the figure and axis with equal aspect ratio
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.set_xlim(min_pos, max_pos)
         ax.set_ylim(-1, 1)
+        ax.set_aspect('equal')
         ax.set_xlabel('Position')
         ax.set_title('Mass-Spring-Damper System Animation')
         ax.grid(True)
         
-        # Create objects for animation
-        mass1 = plt.Rectangle((x1_positions[0]-0.2, -0.5), 0.4, 0.4, fc='blue', ec='black')
-        mass2 = plt.Rectangle((x2_positions[0]-0.2, -0.5), 0.4, 0.4, fc='red', ec='black')
-        spring = plt.Line2D([0, 0], [0, 0], color='green', linewidth=2, linestyle='-')
-        left_spring = plt.Line2D([0, 0], [0, 0], color='green', linewidth=2, linestyle='-')
-        time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+        # Use circles for the masses so that they are centered on the positions.
+        from matplotlib.patches import Circle  # Ensure Circle is imported
+        mass1 = Circle((x1_positions[0], 0), radius=self.r, fc='blue', ec='black')
+        mass2 = Circle((x2_positions[0], 0), radius=self.r, fc='red', ec='black')
         
-        # Add elements to the plot
+        # Create spring elements with different colors
+        wall_spring = plt.Line2D([0, x1_positions[0]], [0, 0], 
+                               color='blue', linewidth=2, linestyle='-')
+        mass_spring = plt.Line2D([x1_positions[0], x2_positions[0]], [0, 0], 
+                               color='red', linewidth=2, linestyle='-')
+        
+        # Add wall visualization
+        wall = plt.Line2D([0, 0], [-1, 1], color='black', linewidth=4)
+        ax.add_line(wall)
+        
+        # Add elements to the plot (remove left_spring)
         ax.add_patch(mass1)
         ax.add_patch(mass2)
-        ax.add_line(spring)
-        ax.add_line(left_spring)
+        ax.add_line(wall_spring)
+        ax.add_line(mass_spring)
         
-        # Function to initialize the animation
+        time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+        
+        # Function to initialize the animation, positioning the circles at their centers
         def init():
-            mass1.set_xy((x1_positions[0]-0.2, -0.5))
-            mass2.set_xy((x2_positions[0]-0.2, -0.5))
-            spring.set_data([x1_positions[0], x2_positions[0]], [-0.3, -0.3])
-            left_spring.set_data([min_pos, x1_positions[0]], [-0.3, -0.3])
+            mass1.center = (x1_positions[0], 0)
+            mass2.center = (x2_positions[0], 0)
+            wall_spring.set_data([0, x1_positions[0]], [0, 0])
+            mass_spring.set_data([x1_positions[0], x2_positions[0]], [0, 0])
             time_text.set_text(f'Time: {times[0]:.2f} s')
-            return mass1, mass2, spring, left_spring, time_text
+            return mass1, mass2, wall_spring, mass_spring, time_text
         
-        # Function to update the animation for each frame
+        # Function to update the animation for each frame, keeping the circles centered.
         def update(frame):
-            mass1.set_xy((x1_positions[frame]-0.2, -0.5))
-            mass2.set_xy((x2_positions[frame]-0.2, -0.5))
-            spring.set_data([x1_positions[frame], x2_positions[frame]], [-0.3, -0.3])
-            left_spring.set_data([min_pos, x1_positions[frame]], [-0.3, -0.3])
+            mass1.center = (x1_positions[frame], 0)
+            mass2.center = (x2_positions[frame], 0)
+            wall_spring.set_data([0, x1_positions[frame]], [0, 0])
+            mass_spring.set_data([x1_positions[frame], x2_positions[frame]], [0, 0])
             time_text.set_text(f'Time: {times[frame]:.2f} s')
-            return mass1, mass2, spring, left_spring, time_text
+            return mass1, mass2, wall_spring, mass_spring, time_text
         
         # Create the animation
         ani = animation.FuncAnimation(
             fig, update, frames=range(len(times)),
             init_func=init, blit=True, interval=50)
         
-        plt.close()  # Prevent duplicate display in Jupyter notebooks
+        # Save the animation if a path is provided
+        if save_path:
+            ani.save(save_path, writer='pillow', fps=30)
+            print(f"Animation saved to {save_path}")
         
-        return ani  # Return the animation object so it can be displayed or saved
+        # Display the animation
+        plt.show()
+        
+        return ani  # Still return the animation object for flexibility
     
     
