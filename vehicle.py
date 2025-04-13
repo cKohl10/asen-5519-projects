@@ -5,11 +5,12 @@ import matplotlib.animation as animation
 
 class Vehicle:
     def __init__(self):
-        self.state_history = []
-        self.time_history = []
-        self.control_history = []
+        self.state_history = [] # X
+        self.time_history = [] # t
+        self.control_history = [] # U
         self.current_time = 0
         self.state_names = []
+        self.collision_flag = False
 
     def reset(self):
         self.state_history = []
@@ -86,8 +87,11 @@ class MassSpringDamper(Vehicle):
         self.s0 = s0
         self.s = self.s0
         self.state_names = ['x1', 'x2', 'v1', 'v2', 'Fk1', 'Fk2'] # x1 and x2 are the positions of the masses, v1 and v2 are the velocities of the masses, Fk1 and Fk2 are the forces exerted by the springs
+        self.Nx = 6 # Number of states
+        self.Nu = 2 # Number of controls
         
         # Constants for the system (these should be defined before using them in A and B)
+        # This is what we want to estimate in the EM algorithm
         self.M1 = p[0]  # mass 1
         self.M2 = p[1]  # mass 2
         self.K1 = p[2]  # spring constant 1
@@ -120,9 +124,12 @@ class MassSpringDamper(Vehicle):
         self.state_history.append(self.s0.copy())
         self.time_history.append(self.current_time)
 
-    def reset(self):
+    def reset(self, s0=None):
         super().reset()
-        self.s = self.s0.copy()
+        if s0 is None:
+            self.s = self.s0.copy()
+        else:
+            self.s = s0
         self.state_history.append(self.s.copy())
         self.time_history.append(self.current_time)
 
@@ -133,6 +140,7 @@ class MassSpringDamper(Vehicle):
         v1, v2 = self.s[2], self.s[3]
         
         if np.abs(x1 - x2) < 2*self.r and (v2 - v1) < 0:  # Only collide when approaching
+            self.collision_flag = True
             # Calculate new velocities using physics of collisions
             m1, m2 = self.M1, self.M2
             e = self.COR
