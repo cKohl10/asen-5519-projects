@@ -23,14 +23,14 @@ def view_data(data):
     plt.show()
 
 def initialize_params(vehicle, data):
-    M1 = np.random.uniform(1, 20) # mass 1
-    M2 = np.random.uniform(1, 20) # mass 2
-    K1 = np.random.uniform(1, 10) # spring constant 1
-    K2 = np.random.uniform(1, 10) # spring constant 2
-    B = np.random.uniform(1, 10) # damping constant
-    r = np.random.uniform(0.1, 0.5) # radius of the masses
-    COR = np.random.uniform(0, 1) # Coefficient of restitution [0,1]
-    theta = np.array([M1, M2, K1, K2, B, r, COR])
+    # M1 = np.random.uniform(1, 20) # mass 1
+    # M2 = np.random.uniform(1, 20) # mass 2
+    # K1 = np.random.uniform(1, 10) # spring constant 1
+    # K2 = np.random.uniform(1, 10) # spring constant 2
+    # B = np.random.uniform(1, 10) # damping constant
+    # r = np.random.uniform(0.1, 0.5) # radius of the masses
+    # COR = np.random.uniform(0, 1) # Coefficient of restitution [0,1]
+    # theta = np.array([M1, M2, K1, K2, B, r, COR])
 
     vehicle.reset()
     vehicle.set_dynamics(theta)
