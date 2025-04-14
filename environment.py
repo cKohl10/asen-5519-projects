@@ -30,13 +30,17 @@ class UnboundedPlane(Environment):
         self.vehicle.step(policy, self.dt, self.t)
         self.t += self.dt
 
-    def epoch(self, animate=False):
+    def epoch(self, animate=False, plot_states=False):
         for _ in range(self.steps):
             self.step(self.policy)
 
         if animate:
             self.vehicle.plot_states()
             ani = self.vehicle.animate()
+            plt.show()
+
+        if plot_states:
+            self.vehicle.plot_states()
             plt.show()
 
         X = self.vehicle.state_history

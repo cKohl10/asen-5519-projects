@@ -11,6 +11,7 @@ class Vehicle:
         self.current_time = 0
         self.state_names = []
         self.collision_flag = False
+        self.vehicle_name = "Vehicle"
 
     def reset(self):
         self.state_history = []
@@ -20,6 +21,18 @@ class Vehicle:
 
     def step(self, policy):
         pass
+
+    def set_dynamics(self, theta):
+        pass
+
+    def set_A(self, A):
+        self.A = A
+
+    def set_B(self, B):
+        self.B = B
+    
+    def set_C(self, C):
+        self.C = C
 
     def animate(self):
         pass
@@ -61,7 +74,7 @@ class Vehicle:
             
         # Add labels and title for states
         axes_states[-1].set_xlabel('Time')
-        fig_states.suptitle("States" if not title else f"States - {title}")
+        fig_states.suptitle(f"{self.vehicle_name} States" if not title else f"{self.vehicle_name} States - {title}")
         
         # Create separate figure for controls
         fig_controls, axes_controls = plt.subplots(n_controls, 1, figsize=figsize, sharex=True)
@@ -80,18 +93,47 @@ class Vehicle:
         fig_controls.suptitle("Controls" if not title else f"Controls - {title}")
 
         plt.tight_layout()
-
+    
 class MassSpringDamper(Vehicle):
-    def __init__(self, s0, p):
+    def __init__(self, theta):
         super().__init__()
-        self.s0 = s0
-        self.s = self.s0
         self.state_names = ['x1', 'x2', 'v1', 'v2', 'Fk1', 'Fk2'] # x1 and x2 are the positions of the masses, v1 and v2 are the velocities of the masses, Fk1 and Fk2 are the forces exerted by the springs
-        self.Nx = 6 # Number of states
-        self.Nu = 2 # Number of controls
+        self.vehicle_name = "Mass-Spring-Damper"
+
+        self.set_dynamics(theta)
+        self.reset()
         
-        # Constants for the system (these should be defined before using them in A and B)
-        # This is what we want to estimate in the EM algorithm
+        # Initialize history with initial state
+        self.state_history.append(self.C @ self.s0)
+        self.time_history.append(self.current_time)
+
+    def reset(self, s0=None):
+        super().reset()
+        self.Ns = self.A.shape[0] # Number of states
+        self.Nx = self.C.shape[0] # Number of observable states
+        self.Nu = self.B.shape[1] # Number of controls
+        self.s0 = self.mu0 + np.random.multivariate_normal(np.zeros(self.Ns), self.V0)
+        self.s = self.s0.copy()
+        self.state_history.append(self.C @ self.s0)
+        self.time_history.append(self.current_time)
+
+    def set_dynamics(self, theta):
+        if "A" in theta:
+            self.A = theta["A"] # State Transition Matrix
+        if "Gamma" in theta:
+            self.Gamma = theta["Gamma"] # State Transition Noise Covariance
+        if "C" in theta:
+            self.C = theta["C"] # Observation Matrix
+        if "Sigma" in theta:
+            self.Sigma = theta["Sigma"] # Observation Noise Covariance
+        if "mu0" in theta:
+            self.mu0 = theta["mu0"] # Initial State Mean
+        if "V0" in theta:
+            self.V0 = theta["V0"] # Initial State Covariance
+        if "B" in theta:
+            self.B = theta["B"] # Control Matrix
+
+    def p_to_dynamics(self, p):
         self.M1 = p[0]  # mass 1
         self.M2 = p[1]  # mass 2
         self.K1 = p[2]  # spring constant 1
@@ -115,26 +157,7 @@ class MassSpringDamper(Vehicle):
                             [0, -self.K1],
                             [0, 0]])
 
-        # Underlying Dynamics
-        
-        self.C = np.eye(6)
-        self.D = np.zeros((6, 2))
-        
-        # Initialize history with initial state
-        self.state_history.append(self.s0.copy())
-        self.time_history.append(self.current_time)
-
-    def reset(self, s0=None):
-        super().reset()
-        if s0 is None:
-            self.s = self.s0.copy()
-        else:
-            self.s = s0
-        self.state_history.append(self.s.copy())
-        self.time_history.append(self.current_time)
-
     def step(self, policy, dt, t):
-
         # Check for collisions with velocity direction consideration
         x1, x2 = self.s[0], self.s[1]
         v1, v2 = self.s[2], self.s[3]
@@ -165,17 +188,18 @@ class MassSpringDamper(Vehicle):
         sdot = self.A @ self.s + self.B @ u
 
         # Update the state
-        self.s = self.s + sdot * dt
+        self.s = self.s + sdot * dt + np.random.multivariate_normal(np.zeros(self.Ns), self.Gamma * dt)
+        self.x = self.C @ self.s + np.random.multivariate_normal(np.zeros(self.Nx), self.Sigma * dt)
         
         # Update time
         self.current_time += dt
         
         # Store state and time in history
-        self.state_history.append(self.s.copy())
+        self.state_history.append(self.x.copy())
         self.time_history.append(self.current_time)
 
         # Return the next state
-        return self.s
+        return self.s, self.x
     
     def animate(self, save_path=None):
         # This problem is two masses connected by springs and dampers.
@@ -202,7 +226,7 @@ class MassSpringDamper(Vehicle):
         ax.set_ylim(-1, 1)
         ax.set_aspect('equal')
         ax.set_xlabel('Position')
-        ax.set_title('Mass-Spring-Damper System Animation')
+        ax.set_title(f'{self.vehicle_name} Animation')
         ax.grid(True)
         
         # Use circles for the masses so that they are centered on the positions.
@@ -260,5 +284,5 @@ class MassSpringDamper(Vehicle):
         plt.show()
         
         return ani  # Still return the animation object for flexibility
-    
+
     
