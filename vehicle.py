@@ -285,4 +285,173 @@ class MassSpringDamper(Vehicle):
         
         return ani  # Still return the animation object for flexibility
 
-    
+class DubinsCar(Vehicle):
+    def __init__(self, theta):
+        super().__init__()
+        self.state_names = ['x', 'y', 'θ']  # position x, y and heading angle
+        self.vehicle_name = "Dubins Car"
+        
+        # Set parameters
+        self.set_dynamics(theta)
+        self.reset()
+        
+        # Initialize history with initial state and zero control
+        self.state_history.append(self.s0.copy())
+        self.time_history.append(self.current_time)
+        self.control_history.append(np.zeros(2))  # Initial zero control [v=0, ω=0]
+
+    def set_dynamics(self, theta):
+        # We only need noise parameters and initial state parameters
+        self.Gamma = theta.get("Gamma", np.zeros((3, 3)))  # Process noise (optional)
+        self.Sigma = theta.get("Sigma", np.eye(3) * 0.01)  # Measurement noise
+        self.mu0 = theta.get("mu0", np.zeros(3))  # Initial state mean
+        self.V0 = theta.get("V0", np.eye(3) * 0.1)  # Initial state uncertainty
+
+    def reset(self, s0=None):
+        super().reset()
+        # For Dubins car: 3 states, 3 observable states, 2 controls
+        self.Ns = 3  # Number of states
+        self.Nx = 3  # Number of observable states
+        self.Nu = 2  # Number of controls (v, ω)
+        
+        self.s0 = self.mu0 + np.random.multivariate_normal(np.zeros(self.Ns), self.V0)
+        self.s = self.s0.copy()
+        
+        # Initialize histories with initial state and zero control
+        self.state_history.append(self.s0.copy())
+        self.time_history.append(self.current_time)
+        # self.control_history.append(np.zeros(2))  # Initial zero control
+
+    def step(self, policy, dt, t):
+        # Get the action from the policy (v, ω)
+        u = policy.get_action(self.s, t)
+        
+        # Dubins car dynamics:
+        # ẋ = v * cos(θ)
+        # ẏ = v * sin(θ)
+        # θ̇ = ω
+        v, omega = u[0], u[1]
+        theta = self.s[2]
+        
+        sdot = np.array([
+            v * np.cos(theta),
+            v * np.sin(theta),
+            omega
+        ])
+
+        # Update the state
+        self.s = self.s + sdot * dt + np.random.multivariate_normal(np.zeros(self.Ns), self.Gamma * dt)
+        self.x = self.s + np.random.multivariate_normal(np.zeros(self.Nx), self.Sigma * dt)
+        
+        # Update time
+        self.current_time += dt
+        
+        # Store state, time, and control
+        self.state_history.append(self.x.copy())
+        self.time_history.append(self.current_time)
+        self.control_history.append(u.copy())  
+
+        return self.s, self.x
+
+    def animate(self, save_path=None):
+        if len(self.state_history) == 0:
+            print("No state history to animate.")
+            return
+            
+        # Convert history lists to numpy arrays
+        states = np.array(self.state_history)
+        times = np.array(self.time_history)
+        
+        # Extract position data
+        x_positions = states[:, 0]
+        y_positions = states[:, 1]
+        thetas = states[:, 2]
+        
+        # Make sure trajectory line has same number of points as states
+        trajectory_x = x_positions[:-1]  # Remove last point to match control history
+        trajectory_y = y_positions[:-1]  # Remove last point to match control history
+        
+        # Determine plot bounds
+        margin = 1.0
+        min_x = np.min(x_positions) - margin
+        max_x = np.max(x_positions) + margin
+        min_y = np.min(y_positions) - margin
+        max_y = np.max(y_positions) + margin
+        
+        # Set up the figure and axis
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.set_xlim(min_x, max_x)
+        ax.set_ylim(min_y, max_y)
+        ax.set_aspect('equal')
+        ax.set_xlabel('X Position')
+        ax.set_ylabel('Y Position')
+        ax.set_title(f'{self.vehicle_name} Animation')
+        ax.grid(True)
+        
+        # Create triangle patch for the car
+        car_length = 0.3
+        car = plt.Polygon([[0, 0]], closed=True, fc='blue', ec='black')
+        ax.add_patch(car)
+        
+        # Add trajectory line
+        trajectory, = ax.plot([], [], 'r--', alpha=0.5)
+        time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+        
+        def init():
+            car.set_xy(self._get_triangle_coords(x_positions[0], y_positions[0], 
+                                               thetas[0], car_length))
+            trajectory.set_data([], [])
+            time_text.set_text(f'Time: {times[0]:.2f} s')
+            return car, trajectory, time_text
+        
+        def update(frame):
+            car.set_xy(self._get_triangle_coords(x_positions[frame], y_positions[frame], 
+                                               thetas[frame], car_length))
+            # Use only up to current frame for trajectory
+            trajectory.set_data(x_positions[:frame], y_positions[:frame])
+            time_text.set_text(f'Time: {times[frame]:.2f} s')
+            return car, trajectory, time_text
+        
+        ani = animation.FuncAnimation(
+            fig, update, frames=range(len(times)),
+            init_func=init, blit=True, interval=50)
+        
+        if save_path:
+            ani.save(save_path, writer='pillow', fps=30)
+            print(f"Animation saved to {save_path}")
+        
+        plt.show()
+        return ani
+
+    def _get_triangle_coords(self, x, y, theta, length):
+        """Helper function to generate triangle coordinates for car visualization"""
+        points = np.array([
+            [length, 0],    # nose
+            [-length/2, length/2],  # right corner
+            [-length/2, -length/2]  # left corner
+        ])
+        
+        # Rotation matrix
+        rot = np.array([
+            [np.cos(theta), -np.sin(theta)],
+            [np.sin(theta), np.cos(theta)]
+        ])
+        
+        # Rotate points and translate to position
+        rotated = points @ rot.T
+        translated = rotated + np.array([x, y])
+        
+        return translated
+
+    def print_history_info(self):
+        """Print information about stored trajectories"""
+        print(f"\nHistory Information for {self.vehicle_name}:")
+        print(f"Number of time points: {len(self.time_history)}")
+        print(f"Number of states: {len(self.state_history)}")
+        print(f"Number of controls: {len(self.control_history)}")
+        
+        if len(self.state_history) > 0:
+            print(f"\nState dimension: {len(self.state_history[0])}")
+        if len(self.control_history) > 0:
+            print(f"Control dimension: {len(self.control_history[0])}")
+
