@@ -53,7 +53,7 @@ if __name__ == "__main__":
     theta_bound = np.pi/6  # Random initial heading within ±30°
 
     # Noise parameters
-    noise_level = 0.01  # Measurement noise
+    noise_level = 0.09  # Measurement noise
 
     # Define theta dictionary for the Dubins car
     theta = {
