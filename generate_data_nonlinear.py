@@ -85,6 +85,23 @@ if __name__ == "__main__":
             return np.array([v, omega])
     
     policy = CircularPolicy()
+    
+    # 3. Random motion
+    class RandomPolicy:
+        def __init__(self, v_min=-1.0, v_max=1.0, omega_min=-np.pi, omega_max=np.pi):
+            self.v_min = v_min
+            self.v_max = v_max
+            self.omega_min = omega_min
+            self.omega_max = omega_max
+            
+        def get_action(self, s, t):
+            # Generate random control inputs
+            v = np.random.uniform(self.v_min, self.v_max)
+            omega = np.random.uniform(self.omega_min, self.omega_max)
+            return np.array([v, omega])
+    
+    # Uncomment to use random policy instead of circular
+    #policy = RandomPolicy()
 
     sim_params = {
         "steps": steps,

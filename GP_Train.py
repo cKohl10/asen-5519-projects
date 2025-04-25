@@ -1,22 +1,52 @@
 import numpy as np
 #import matplotlib.pyplot as plt
+from tqdm import tqdm
+from sklearn.model_selection import train_test_split
 
 def trainGP(X, U, length_scale=1.0, sigma_f=1.0, sigma_n=1e-6):
+    # Handle both single trajectory and multiple trajectories
+    if len(X.shape) == 2:
+        # Single trajectory case - convert to 3D array with shape (T, Nx, 1)
+        X = X.reshape(X.shape[0], X.shape[1], 1)
+        U = U.reshape(U.shape[0], U.shape[1], 1)
+    
     T = U.shape[0]
     Nx = X.shape[1]
     Nu = U.shape[1]
-
-    Z_train = np.zeros((T, Nx + Nu))
-    Y_train = np.zeros((T, Nx))
-
-    for t in range(T):
-        Z_train[t] = np.concatenate((X[t], U[t]))
-        Y_train[t] = X[t+1] - X[t]
-
+    N_traj = X.shape[2]
+    
+    print(f"Training on {N_traj} trajectories with {T} timesteps each...")
+    
+    # Initialize arrays to store all trajectories
+    Z_train = []
+    Y_train = []
+    
+    # Process each trajectory with progress bar
+    for traj_idx in tqdm(range(N_traj), desc="Processing trajectories"):
+        X_traj = X[:, :, traj_idx]
+        U_traj = U[:, :, traj_idx]
+        
+        for t in range(T):
+            Z_train.append(np.concatenate((X_traj[t], U_traj[t])))
+            Y_train.append(X_traj[t+1] - X_traj[t])
+    
+    # Convert to numpy arrays
+    Z_train = np.array(Z_train)
+    Y_train = np.array(Y_train)
+    
+    print(f"Building kernel matrix with {len(Z_train)} training points...")
+    
+    # Train the model on all trajectories
     K = defineKernel(Z_train, Z_train, theta_idx=2, length_scale=length_scale, sigma=sigma_f)
-    K += sigma_n**2 * np.eye(T)
+    K += sigma_n**2 * np.eye(len(Z_train))
+    
+    print("Computing kernel inverse...")
     K_inv = np.linalg.inv(K)
+    
+    print("Computing alphas for each dimension...")
     alphas = [K_inv @ Y_train[:, d] for d in range(Nx)]
+    
+    print("Training complete!")
 
     return {
         'Z_train': Z_train,
@@ -61,8 +91,100 @@ def predictGP(z_star, model):
     # Return x_t + Δx as the next state
     return z_star[:3] + dx  # assumes z_star[:3] is [x_t, y_t, θ_t]
 
-
-
+def optimize_hyperparameters(X, U, n_trials=10):
+    """
+    Optimize hyperparameters using a simple random search approach.
+    
+    Args:
+        X: State data
+        U: Control data
+        n_trials: Number of random trials to perform
+        
+    Returns:
+        Best hyperparameters and their score
+    """
+    print("Starting hyperparameter optimization...")
+    
+    # Prepare data
+    if len(X.shape) == 2:
+        X = X.reshape(X.shape[0], X.shape[1], 1)
+        U = U.reshape(U.shape[0], U.shape[1], 1)
+    
+    T = U.shape[0]
+    Nx = X.shape[1]
+    Nu = U.shape[1]
+    N_traj = X.shape[2]
+    
+    # Prepare training data
+    Z_all = []
+    Y_all = []
+    
+    for traj_idx in range(N_traj):
+        X_traj = X[:, :, traj_idx]
+        U_traj = U[:, :, traj_idx]
+        
+        for t in range(T):
+            Z_all.append(np.concatenate((X_traj[t], U_traj[t])))
+            Y_all.append(X_traj[t+1] - X_traj[t])
+    
+    Z_all = np.array(Z_all)
+    Y_all = np.array(Y_all)
+    
+    # Split data into training and validation sets
+    Z_train, Z_val, Y_train, Y_val = train_test_split(Z_all, Y_all, test_size=0.2, random_state=42)
+    
+    # Define hyperparameter ranges
+    length_scales = np.logspace(-1, 1, 5)  # [0.1, 0.3, 1.0, 3.0, 10.0]
+    sigma_fs = np.logspace(-1, 1, 5)      # [0.1, 0.3, 1.0, 3.0, 10.0]
+    sigma_ns = np.logspace(-6, -3, 4)     # [1e-6, 1e-5, 1e-4, 1e-3]
+    
+    best_score = float('inf')
+    best_params = None
+    
+    # Random search
+    for _ in tqdm(range(n_trials), desc="Hyperparameter optimization"):
+        # Randomly select hyperparameters
+        length_scale = np.random.choice(length_scales)
+        sigma_f = np.random.choice(sigma_fs)
+        sigma_n = np.random.choice(sigma_ns)
+        
+        # Build kernel matrix
+        K = defineKernel(Z_train, Z_train, theta_idx=2, length_scale=length_scale, sigma=sigma_f)
+        K += sigma_n**2 * np.eye(len(Z_train))
+        
+        try:
+            # Compute kernel inverse
+            K_inv = np.linalg.inv(K)
+            
+            # Compute alphas
+            alphas = [K_inv @ Y_train[:, d] for d in range(Nx)]
+            
+            # Compute predictions on validation set
+            Y_pred = np.zeros_like(Y_val)
+            for i in range(len(Z_val)):
+                k_star = defineKernel(Z_val[i:i+1], Z_train, theta_idx=2, 
+                                     length_scale=length_scale, sigma=sigma_f).flatten()
+                Y_pred[i] = np.array([k_star @ alpha_d for alpha_d in alphas])
+            
+            # Compute MSE
+            mse = np.mean((Y_val - Y_pred)**2)
+            
+            # Update best parameters if better
+            if mse < best_score:
+                best_score = mse
+                best_params = {
+                    'length_scale': length_scale,
+                    'sigma_f': sigma_f,
+                    'sigma_n': sigma_n
+                }
+                print(f"New best parameters: {best_params}, MSE: {mse:.6f}")
+                
+        except np.linalg.LinAlgError:
+            # Skip if matrix is singular
+            continue
+    
+    print(f"Optimization complete. Best parameters: {best_params}, MSE: {best_score:.6f}")
+    return best_params, best_score
 
 def split_data(data, traj_idx=0, split_index=200):
     # Extract trajectory

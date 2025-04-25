@@ -1,31 +1,53 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from GP_Train import defineKernel, trainGP, predictGP, split_data
-# Load In Dubins Car Data
-data = np.load('data/dubins_circular_motion.npz')
-X = data['X_set'][:,:,0]  # States
-U = data['U_set'][:,:,0]  # Controls
-t = data['t_set'][:,0]    # Time vector
+from tqdm import tqdm
+
+# Load both random and circular motion data for diverse training
+print("Loading training data...")
+random_data = np.load('data/dubins_random_motion.npz')
+circ_data = np.load('data/dubins_circular_motion.npz')
+
+# Combine data from both sources
+X_random = random_data['X_set']  # States from random motion
+U_random = random_data['U_set']  # Controls from random motion
+X_circ = circ_data['X_set'][:,:,0:1]  # First trajectory from circular motion
+U_circ = circ_data['U_set'][:,:,0:1]  # First trajectory from circular motion
+
+# Select a subset of random trajectories
+traj_indices = np.arange(0, X_random.shape[2], 10)  # Use fewer random trajectories
+X_random_subset = X_random[:, :, traj_indices]
+U_random_subset = U_random[:, :, traj_indices]
+
+# Combine the data
+X = np.concatenate([X_random_subset, X_circ], axis=2)
+U = np.concatenate([U_random_subset, U_circ], axis=2)
 
 T = U.shape[0]
 Nx = X.shape[1] 
 Nu = U.shape[1] 
-sigma_n = 1e-6
+N_traj = X.shape[2]
+sigma_n = 1e-4  # Increased noise parameter for regularization
 
-# Split data at index 200
-(X_train, U_train), (X_test, U_test) = split_data(data, traj_idx=0, split_index=200)
+print(f"Training on {N_traj} trajectories ({len(traj_indices)} random + 1 circular)")
 
-# Extract time for training and test data
-# Note: X_train has one more element than U_train (initial state + states after each control)
-t_train = t[:X_train.shape[0]]  # Use X_train.shape[0] to get all states including initial
-t_test = t[X_train.shape[0]-1:]  # Start from the last training state
+# Train the Model with adjusted kernel parameters
+# Larger length_scale for smoother predictions, higher sigma_f for more flexibility
+model = trainGP(X, U, length_scale=2.0, sigma_f=2.0, sigma_n=sigma_n)
 
-model = trainGP(X, U)
+# Load in data to test: 
+print("\nLoading test data...")
+# Use the second trajectory from circular motion for testing
+X_test = circ_data['X_set'][:,:,1]  # States
+U_test = circ_data['U_set'][:,:,1]  # Controls
+t_test = circ_data['t_set'][:,1]    # Time vector
 
+print(f"Running predictions on test trajectory with {U_test.shape[0]} timesteps...")
 x = X_test[0]  # Initial test state
 estimates = [x.copy()]
 
-for i in range(U_test.shape[0]):
+# Add progress bar to prediction loop
+for i in tqdm(range(U_test.shape[0]), desc="Making predictions"):
     u = U_test[i]
     z = np.concatenate((x, u))
     x = predictGP(z, model)  # GP returns x_{t+1}
@@ -51,7 +73,7 @@ plt.grid(True)
 plt.subplot(2, 1, 2)
 plt.plot(t_test, X_test[:, 1], 'b-', label='True y')
 # Start plotting estimates at the end of training data
-plt.plot(t_test, estimates[0:, 1], 'r--', label='Predicted y')
+plt.plot(t_test, estimates[:, 1], 'r--', label='Predicted y')
 plt.legend()
 plt.title("True vs. Predicted y Position")
 plt.xlabel("Time (s)")
