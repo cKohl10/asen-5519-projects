@@ -134,9 +134,9 @@ def optimize_hyperparameters(X, U, n_trials=10):
     Z_train, Z_val, Y_train, Y_val = train_test_split(Z_all, Y_all, test_size=0.2, random_state=42)
     
     # Define hyperparameter ranges
-    length_scales = np.logspace(-1, 1, 5)  # [0.1, 0.3, 1.0, 3.0, 10.0]
-    sigma_fs = np.logspace(-1, 1, 5)      # [0.1, 0.3, 1.0, 3.0, 10.0]
-    sigma_ns = np.logspace(-6, -3, 4)     # [1e-6, 1e-5, 1e-4, 1e-3]
+    length_scales = np.logspace(-1, 1, 20)
+    sigma_fs = np.logspace(-1, 1, 20)
+    sigma_ns = np.logspace(-6, -3, 20)
     
     best_score = float('inf')
     best_params = None
