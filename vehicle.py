@@ -22,6 +22,9 @@ class Vehicle:
     def step(self, policy):
         pass
 
+    def prediction_step(self, policy):
+        pass
+
     def set_dynamics(self, theta):
         pass
 
@@ -37,7 +40,7 @@ class Vehicle:
     def animate(self):
         pass
     
-    def plot_states(self, title=None, figsize=(12, 8)):
+    def plot_states(self, title=None, figsize=(12, 8), states_fig=None, controls_fig=None):
         """
         Plot all state variables over time.
         
@@ -62,7 +65,10 @@ class Vehicle:
         n_controls = controls.shape[1]
 
         # Create figure for states
-        fig_states, axes_states = plt.subplots(n_states, 1, figsize=figsize, sharex=True)
+        if states_fig is None:
+            fig_states, axes_states = plt.subplots(n_states, 1, figsize=figsize, sharex=True)
+        else:
+            fig_states, axes_states = states_fig, states_fig.axes
         if n_states == 1:
             axes_states = [axes_states]
             
@@ -77,7 +83,10 @@ class Vehicle:
         fig_states.suptitle(f"{self.vehicle_name} States" if not title else f"{self.vehicle_name} States - {title}")
         
         # Create separate figure for controls
-        fig_controls, axes_controls = plt.subplots(n_controls, 1, figsize=figsize, sharex=True)
+        if controls_fig is None:
+            fig_controls, axes_controls = plt.subplots(n_controls, 1, figsize=figsize, sharex=True)
+        else:
+            fig_controls, axes_controls = controls_fig, controls_fig.axes
         if n_controls == 1:
             axes_controls = [axes_controls]
             
@@ -99,13 +108,10 @@ class MassSpringDamper(Vehicle):
         super().__init__()
         self.state_names = ['x1', 'x2', 'v1', 'v2', 'Fk1', 'Fk2'] # x1 and x2 are the positions of the masses, v1 and v2 are the velocities of the masses, Fk1 and Fk2 are the forces exerted by the springs
         self.vehicle_name = "Mass-Spring-Damper"
+        self.r = 0.3 # radius of the masses, can be overwritten by the p_to_dynamics function
 
         self.set_dynamics(theta)
         self.reset()
-        
-        # Initialize history with initial state
-        self.state_history.append(self.C @ self.s0)
-        self.time_history.append(self.current_time)
 
     def reset(self, s0=None):
         super().reset()
@@ -133,6 +139,20 @@ class MassSpringDamper(Vehicle):
         if "B" in theta:
             self.B = theta["B"] # Control Matrix
 
+    def get_theta(self, N):
+        return {
+            "A": self.A,
+            "Gamma": self.Gamma,
+            "C": self.C,
+            "Sigma": self.Sigma,
+            "mu0": self.mu0,
+            "V0": self.V0,
+            "B": self.B,
+            "N": N,
+            "Nx": 6,
+            "Nu": self.Nu
+        }
+
     def p_to_dynamics(self, p):
         self.M1 = p[0]  # mass 1
         self.M2 = p[1]  # mass 2
@@ -158,6 +178,7 @@ class MassSpringDamper(Vehicle):
                             [0, 0]])
 
     def step(self, policy, dt, t):
+
         # Check for collisions with velocity direction consideration
         x1, x2 = self.s[0], self.s[1]
         v1, v2 = self.s[2], self.s[3]
@@ -187,12 +208,13 @@ class MassSpringDamper(Vehicle):
         # Step the dynamics
         sdot = self.A @ self.s + self.B @ u
 
-        # Update the state
-        self.s = self.s + sdot * dt + np.random.multivariate_normal(np.zeros(self.Ns), self.Gamma * dt)
-        self.x = self.C @ self.s + np.random.multivariate_normal(np.zeros(self.Nx), self.Sigma * dt)
+        # This uses the CONTINUOUS time dynamics matrices A and B
+        self.s = self.s + sdot * dt + np.random.multivariate_normal(np.zeros(self.Ns), self.Gamma)
+        self.x = self.C @ self.s + np.random.multivariate_normal(np.zeros(self.Nx), self.Sigma)
         
         # Update time
         self.current_time += dt
+            
         
         # Store state and time in history
         self.state_history.append(self.x.copy())
@@ -200,6 +222,27 @@ class MassSpringDamper(Vehicle):
 
         # Return the next state
         return self.s, self.x
+    
+    def prediction_step(self, policy, dt, t):
+
+        # Get the action from the policy
+        u = policy.get_action(self.s, t)
+        self.control_history.append(u.copy())
+
+        # This uses the DISCRETE time dynamics matrices A and C
+        self.s = self.A @ self.s + np.random.multivariate_normal(np.zeros(self.Ns), self.Gamma)
+        self.x = self.C @ self.s + np.random.multivariate_normal(np.zeros(self.Nx), self.Sigma)
+
+        # Update time
+        self.current_time += dt
+        
+        # Store state and time in history
+        self.state_history.append(self.x.copy())
+        self.time_history.append(self.current_time)
+        
+        # Return the next state
+        return self.s, self.x
+        
     
     def animate(self, save_path=None):
         # This problem is two masses connected by springs and dampers.
