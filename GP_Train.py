@@ -67,7 +67,6 @@ def defineKernel(Z1,Z2,theta_idx=2,length_scale=1.0,sigma=1.0,period = 2*np.pi):
     K_theta = np.exp(-2 * np.sin(dtheta)**2 / length_scale**2)
 
     # RBF kernel on remaining dimensions
-    # Make sure we're handling dimensions consistently
     Z1_rbf = np.delete(Z1, theta_idx, axis=1)
     Z2_rbf = np.delete(Z2, theta_idx, axis=1)
     
@@ -77,7 +76,9 @@ def defineKernel(Z1,Z2,theta_idx=2,length_scale=1.0,sigma=1.0,period = 2*np.pi):
     
     sqdist = np.sum(Z1_rbf**2, axis=1).reshape(-1, 1) + \
             np.sum(Z2_rbf**2, axis=1) - 2 * np.dot(Z1_rbf, Z2_rbf.T)
-    K_rbf = np.exp(-0.5 * sqdist / length_scale**2)
+    K_rbf = np.exp(-0.5 * sqdist / (length_scale**2))
+    
+    # Combine kernels with proper scaling
     return sigma**2 * K_rbf * K_theta
 
 def predictGP(z_star, model):
@@ -206,39 +207,10 @@ def split_data(data, traj_idx=0, split_index=200):
 
     return (X_train, U_train), (X_test, U_test)
 
-def is_positive_definite(matrix):
-    """Check if a matrix is positive definite using Cholesky decomposition."""
-    try:
-        np.linalg.cholesky(matrix)
-        return True
-    except np.linalg.LinAlgError:
-        return False
-
-def check_kernel_properties(K):
-    """Check various properties of the kernel matrix."""
-    # Check positive definiteness
-    is_pd = is_positive_definite(K)
-    
-    # Compute eigenvalues
-    eigvals = np.linalg.eigvals(K)
-    min_eigval = np.min(eigvals)
-    max_eigval = np.max(eigvals)
-    cond_number = max_eigval / min_eigval if min_eigval > 0 else float('inf')
-    
-    # Check symmetry
-    is_symmetric = np.allclose(K, K.T)
-    
-    return {
-        'is_positive_definite': is_pd,
-        'min_eigenvalue': min_eigval,
-        'max_eigenvalue': max_eigval,
-        'condition_number': cond_number,
-        'is_symmetric': is_symmetric
-    }
-
 def trainGP_V2(X, U, training_points=300, sampling_steps=200, length_scale=1.0, sigma_f=1.0, sigma_n=1e-6):
     """
     Train a GP model on training points and then sequentially sample and update.
+    Control is treated as input, and only state changes are predicted.
     
     Args:
         X: State data of shape (T+1, Nx)
@@ -263,13 +235,13 @@ def trainGP_V2(X, U, training_points=300, sampling_steps=200, length_scale=1.0, 
     print(f"Training on {training_points} points...")
     
     # Initialize arrays for training
-    Z_train = []
-    Y_train = []
+    Z_train = []  # Input: [state, control]
+    Y_train = []  # Output: state changes only
     
     # Process training points
     for t in range(min(training_points, T)):
-        Z_train.append(np.concatenate((X[t], U[t])))
-        Y_train.append(np.concatenate((X[t+1] - X[t], U[t+1] - U[t])))  # Include control changes
+        Z_train.append(np.concatenate((X[t], U[t])))  # Input: current state and control
+        Y_train.append(X[t+1] - X[t])  # Output: only state changes
     
     # Convert to numpy arrays
     Z_train = np.array(Z_train)
@@ -278,34 +250,31 @@ def trainGP_V2(X, U, training_points=300, sampling_steps=200, length_scale=1.0, 
     # Initialize arrays to store sampled trajectory
     sampled_trajectory = []
     sampled_controls = []
-    sampled_variances = []  # Store variances at each step
-    current_state = X[min(training_points, T)]  # Start from last state of training
-    current_control = U[min(training_points, T)]  # Start from last control of training
+    sampled_variances = []
+    current_state = X[min(training_points, T)]
+    current_control = U[min(training_points, T)]
     sampled_trajectory.append(current_state.copy())
     sampled_controls.append(current_control.copy())
     
     # Main sampling loop
     for step in tqdm(range(sampling_steps), desc="Sampling trajectory"):
+        # Create current state-control pair
+        z_star = np.concatenate((current_state, current_control))
+        
         # Build kernel matrix with current training data
         K = defineKernel(Z_train, Z_train, theta_idx=2, length_scale=length_scale, sigma=sigma_f)
         K += sigma_n**2 * np.eye(len(Z_train))
+        K += 1e-6 * np.eye(len(Z_train))
         
-        # Add small diagonal term for numerical stability
-        K += 1e-10 * np.eye(len(Z_train))
-        
-        # Compute kernel inverse using Cholesky decomposition for better numerical stability
+        # Compute kernel inverse using Cholesky decomposition
         try:
             L = np.linalg.cholesky(K)
             K_inv = np.linalg.solve(L.T, np.linalg.solve(L, np.eye(len(K))))
         except np.linalg.LinAlgError:
-            # If Cholesky fails, use regular inverse with additional regularization
             K_inv = np.linalg.inv(K + 1e-6 * np.eye(len(K)))
         
-        # Compute alphas for each dimension
-        alphas = [K_inv @ Y_train[:, d] for d in range(Nx + Nu)]  # Include control dimensions
-        
-        # Create current state-control pair
-        z_star = np.concatenate((current_state, current_control))
+        # Compute alphas for each dimension (only state dimensions)
+        alphas = [K_inv @ Y_train[:, d] for d in range(Nx)]
         
         # Compute kernel vector between z_star and training points
         k_star = defineKernel(z_star.reshape(1, -1), Z_train,
@@ -313,7 +282,7 @@ def trainGP_V2(X, U, training_points=300, sampling_steps=200, length_scale=1.0, 
                              length_scale=length_scale,
                              sigma=sigma_f).flatten()
         
-        # Compute predictive mean and variance
+        # Compute predictive mean and variance (only for state changes)
         mean = np.array([k_star @ alpha_d for alpha_d in alphas])
         
         k_star_star = defineKernel(z_star.reshape(1, -1), z_star.reshape(1, -1),
@@ -321,53 +290,46 @@ def trainGP_V2(X, U, training_points=300, sampling_steps=200, length_scale=1.0, 
                                   length_scale=length_scale,
                                   sigma=sigma_f)[0, 0]
         
-        # Compute predictive variance for each dimension
-        var = np.zeros(Nx + Nu)
-        for d in range(Nx + Nu):
-            # Compute the quadratic form term
+        # Compute predictive variance for each state dimension
+        var = np.zeros(Nx)
+        for d in range(Nx):
+            # Compute the quadratic form term using the alpha vector for this dimension
             quadratic_form = k_star @ K_inv @ k_star
+            # Add the contribution from the alpha vector for this dimension
+            var[d] = k_star_star - quadratic_form + sigma_n**2
+            var[d] = max(var[d], 1e-10)  # Ensure non-negative variance
             
-            # # Check for numerical issues
-            # if abs(k_star_star - quadratic_form) < 1e-10:
-            #     print(f"\nWarning: Small difference between terms at step {step}, dimension {d}")
-            #     print(f"k_star_star: {k_star_star}")
-            #     print(f"quadratic_form: {quadratic_form}")
-            #     print(f"Difference: {k_star_star - quadratic_form}")
-            
-            var[d] = k_star_star - quadratic_form
-            
-            # Ensure variance is non-negative
-            var[d] = max(var[d], 1e-10)
+            # Print debug information every 50 steps
+            if step % 50 == 0:
+                print(f"\nStep {step}, Dimension {d}:")
+                print(f"k_star_star: {k_star_star}")
+                print(f"quadratic_form: {quadratic_form}")
+                print(f"variance: {var[d]}")
+                print(f"max kernel value: {np.max(k_star)}")
+                print(f"min kernel value: {np.min(k_star)}")
+                print(f"distance to nearest training point: {np.min(np.linalg.norm(Z_train - z_star, axis=1))}")
         
         # Store variances for this step
-        sampled_variances.append(var[:Nx])  # Only store state variances
+        sampled_variances.append(var)  # Store all state variances
         
-        # Sample from predictive distribution
+        # Sample from predictive distribution (only state changes)
         sampled_dx = np.random.normal(mean, np.sqrt(var))
         
-        # Update state and control
-        current_state = current_state + sampled_dx[:Nx]  # First Nx dimensions for state
-        current_control = current_control + sampled_dx[Nx:]  # Remaining dimensions for control
-        
-        # Store sampled state and control
-        sampled_trajectory.append(current_state.copy())
-        sampled_controls.append(current_control.copy())
+        # Update state (control remains unchanged)
+        current_state = current_state + sampled_dx
         
         # Add new point to training data
         Z_train = np.vstack((Z_train, z_star))
         Y_train = np.vstack((Y_train, sampled_dx))
+        
+        # Store sampled state and control
+        sampled_trajectory.append(current_state.copy())
+        sampled_controls.append(current_control.copy())
     
     # Convert sampled trajectory to numpy array
     sampled_trajectory = np.array(sampled_trajectory)  # shape: (sampling_steps+1, Nx)
     sampled_controls = np.array(sampled_controls)  # shape: (sampling_steps+1, Nu)
     sampled_variances = np.array(sampled_variances)  # shape: (sampling_steps, Nx)
-    
-    # Build final model
-    K = defineKernel(Z_train, Z_train, theta_idx=2, length_scale=length_scale, sigma=sigma_f)
-    K += sigma_n**2 * np.eye(len(Z_train))
-    K += 1e-10 * np.eye(len(Z_train))  # Add small diagonal term
-    K_inv = np.linalg.inv(K)
-    alphas = [K_inv @ Y_train[:, d] for d in range(Nx + Nu)]
     
     return {
         'Z_train': Z_train,
@@ -377,5 +339,5 @@ def trainGP_V2(X, U, training_points=300, sampling_steps=200, length_scale=1.0, 
         'params': {'length_scale': length_scale, 'sigma_f': sigma_f, 'sigma_n': sigma_n},
         'sampled_trajectory': sampled_trajectory,
         'sampled_controls': sampled_controls,
-        'sampled_variances': sampled_variances  # Add variances to output
+        'sampled_variances': sampled_variances
     }
