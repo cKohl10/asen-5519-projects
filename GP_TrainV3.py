@@ -46,7 +46,7 @@ def train_gp(Z_train, Y_train_d, Theta_idx,length_scale, sigma_f, sigma_n):
         'params': {'length_scale': length_scale, 'sigma_f': sigma_f, 'sigma_n': sigma_n}
     }
 # Train three seperate GPs for each state dimension
-def trainGP_V3(X, U, training_points=300, sampling_steps=200, length_scale=1.0, sigma_f=1.0, sigma_n=1e-6):
+def trainGP_V3(X, U, training_points=300, sampling_steps=200, length_scale=1.0, sigma_f=1.0, sigma_n=1e-6, num_trajectories=20):
     """
     Train three separate GP models (one for each state dimension) on training points and then sequentially sample and update.
     Control is treated as input, and each GP predicts its corresponding state change.
@@ -59,9 +59,10 @@ def trainGP_V3(X, U, training_points=300, sampling_steps=200, length_scale=1.0, 
         length_scale: Kernel length scale
         sigma_f: Signal variance
         sigma_n: Noise variance
+        num_trajectories: Number of trajectories to sample
         
     Returns:
-        Dictionary containing the three GP models and sampled trajectory
+        Dictionary containing the three GP models and sampled trajectories
     """
     # Ensure inputs are 2D arrays
     X = np.atleast_2d(X)
@@ -74,8 +75,8 @@ def trainGP_V3(X, U, training_points=300, sampling_steps=200, length_scale=1.0, 
     print(f"Training {Nx} separate GPs on {training_points} points each...")
     
     # Initialize arrays for training
-    Z_train = []  # Will be a list of arrays, one for each dimension
-    Y_train = []  # Output: state changes for each dimension
+    initial_Z_train = []  # Store initial training data
+    initial_Y_train = []  # Store initial training outputs
     
     # Process training points
     # Randomly sample points from the trajectory
@@ -84,94 +85,120 @@ def trainGP_V3(X, U, training_points=300, sampling_steps=200, length_scale=1.0, 
     
     for t in random_indices:
         # Create input and Output data for each dimension
-        Z_train.append(np.concatenate((X[t], U[t])))
-        Y_train.append(X[t+1] - X[t]) 
+        initial_Z_train.append(np.concatenate((X[t], U[t])))
+        initial_Y_train.append(X[t+1] - X[t]) 
     
     # Convert to numpy arrays
-    Z_train = np.array(Z_train)
-    Y_train = np.array(Y_train)
+    initial_Z_train = np.array(initial_Z_train)
+    initial_Y_train = np.array(initial_Y_train)
     
-    print(f"Z_train shape: {Z_train.shape}")
-    print(f"Y_train shape: {Y_train.shape}")
+    print(f"Initial Z_train shape: {initial_Z_train.shape}")
+    print(f"Initial Y_train shape: {initial_Y_train.shape}")
     
-    # Initialize arrays to store sampled trajectory
-    sampled_trajectory = []
-    sampled_controls = []
-    sampled_variances = []
-    current_state = X[min(training_points, T)]
-    current_control = U[min(training_points, T)]
-    sampled_trajectory.append(current_state.copy())
-    sampled_controls.append(current_control.copy())
+    # Initialize arrays to store sampled trajectories
+    all_trajectories = []
+    all_controls = []
+    all_variances = []
+    all_state_variances = []
     
-    # Train initial GPs
-    gps = []
-    for d in range(Nx):
-        print(f"\nTraining GP for dimension {d}...")
-        gps.append(train_gp(Z_train, Y_train, 2, length_scale, sigma_f, sigma_n))
-    
-    # Main sampling loop
-    for step in tqdm(range(sampling_steps), desc="Sampling trajectory"):
-        # Create current state-control pair for each dimension
-        z_star = np.concatenate((current_state, current_control))
+    # Generate multiple trajectories
+    for traj_idx in tqdm(range(num_trajectories), desc="Generating trajectories"):
+        # Reset training data for each trajectory
+        Z_train = initial_Z_train.copy()
+        Y_train = initial_Y_train.copy()
         
-        # Initialize arrays for this step's predictions
-        mean = np.zeros(Nx)
-        var = np.zeros(Nx)
-        sampled_dx = np.zeros(Nx)  # Initialize sampled_dx
-        
-        # Get predictions from each GP
+        # Train initial GPs
+        gps = []
         for d in range(Nx):
-            gp = gps[d]
-            
-            # Compute kernel vector between z_star and training points
-            k_star = defineKernel(z_star.reshape(1, -1), Z_train,
-                                 2,  # theta index is always 2
-                                 length_scale=gp['params']['length_scale'],
-                                 sigma=gp['params']['sigma_f']).flatten()
-            
-            k_star_star = defineKernel(z_star.reshape(1, -1), z_star.reshape(1, -1),
-                                 2,  # theta index is always 2
-                                 length_scale=gp['params']['length_scale'],
-                                 sigma=gp['params']['sigma_f'])[0, 0]
-            
-            # Compute predictive mean and variance
-            mean[d] = k_star @ gp['alpha'].T[d]  # Take d-th column of transposed alpha
-            
-            # Compute predictive variance for this dimension
-            quadratic_form = k_star @ gp['kernel_inv'] @ k_star
-            var[d] = k_star_star - quadratic_form
-            var[d] = max(var[d], 1e-10)  # Ensure non-negative variance
-            
-            # Sample from predictive distribution
-            sampled_dx[d] = np.random.normal(mean[d], np.sqrt(var[d]))
+            print(f"\nTraining GP for dimension {d}...")
+            if d == 0:
+                sigma_n = 0.1
+            else:
+                sigma_n = 0.05
+            gps.append(train_gp(Z_train, Y_train, 2, length_scale, sigma_f, sigma_n))
         
-        # Update state
-        current_state = current_state + sampled_dx
-        
-        # Add new point to training data
-        new_z = np.concatenate((current_state, current_control))
-        Z_train = np.concatenate((Z_train, new_z[np.newaxis, :]), axis=0)  # Add newaxis to make new_z 2D
-        Y_train = np.vstack((Y_train, sampled_dx))
-        
-        # Retrain GPs with new data
-        for d in range(Nx):
-            gps[d] = train_gp(Z_train, Y_train, 2, length_scale, sigma_f, sigma_n)
-        
-        # Store sampled state, control, and variance
+        # Initialize for this trajectory
+        sampled_trajectory = []
+        sampled_controls = []
+        sampled_variances = []
+        sampled_state_variance = []
+        current_state = X[min(training_points, T)]
+        current_control = U[min(training_points, T)]
         sampled_trajectory.append(current_state.copy())
         sampled_controls.append(current_control.copy())
-        sampled_variances.append(var.copy())
-    
-    # Convert sampled trajectory to numpy array
-    sampled_trajectory = np.array(sampled_trajectory)  # shape: (sampling_steps+1, Nx)
-    sampled_controls = np.array(sampled_controls)  # shape: (sampling_steps+1, Nu)
-    sampled_variances = np.array(sampled_variances)  # shape: (sampling_steps, Nx)
+        
+        # Main sampling loop for this trajectory
+        for step in range(sampling_steps):
+            # Create current state-control pair for each dimension
+            z_star = np.concatenate((current_state, current_control))
+            
+            # Initialize arrays for this step's predictions
+            mean = np.zeros(Nx)
+            var = np.zeros(Nx)
+            sampled_dx = np.zeros(Nx)  # Initialize sampled_dx
+            
+            # Get predictions from each GP
+            for d in range(Nx):
+                gp = gps[d]
+                
+                # Compute kernel vector between z_star and training points
+                k_star = defineKernel(z_star.reshape(1, -1), Z_train,
+                                     2,  # theta index is always 2
+                                     length_scale=gp['params']['length_scale'],
+                                     sigma=gp['params']['sigma_f']).flatten()
+                
+                k_star_star = defineKernel(z_star.reshape(1, -1), z_star.reshape(1, -1),
+                                     2,  # theta index is always 2
+                                     length_scale=gp['params']['length_scale'],
+                                     sigma=gp['params']['sigma_f'])[0, 0]
+                
+                # Compute predictive mean and variance
+                mean[d] = k_star @ gp['alpha'].T[d]  # Take d-th column of transposed alpha
+                
+                # Compute predictive variance for this dimension
+                quadratic_form = k_star @ gp['kernel_inv'] @ k_star
+                var[d] = k_star_star - quadratic_form
+                var[d] = max(var[d], 1e-10)  # Ensure non-negative variance
+                
+                # Sample from predictive distribution
+                sampled_dx[d] = np.random.normal(mean[d], np.sqrt(var[d]))
+            
+            # Update state
+            current_state = current_state + sampled_dx
+            
+            # Add new point to training data
+            new_z = np.concatenate((current_state, current_control))
+            Z_train = np.concatenate((Z_train, new_z[np.newaxis, :]), axis=0)
+            Y_train = np.vstack((Y_train, sampled_dx))
+            
+            # Retrain GPs with new data
+            for d in range(Nx):
+                gps[d] = train_gp(Z_train, Y_train, 2, length_scale, sigma_f, sigma_n)
+            
+            # Store sampled state, control, and variance
+            sampled_trajectory.append(current_state.copy())
+            sampled_controls.append(current_control.copy())
+            sampled_variances.append(var.copy())
+            
+            # Update state variance
+            if step == 0:
+                state_var = var.copy()
+            else:
+                state_var += var
+            sampled_state_variance.append(state_var.copy())
+        
+        # Store this trajectory's data
+        all_trajectories.append(np.array(sampled_trajectory))
+        all_controls.append(np.array(sampled_controls))
+        all_variances.append(np.array(sampled_variances))
+        all_state_variances.append(np.array(sampled_state_variance))
     
     return {
-        'gps': gps,  # List of GP models, one for each dimension
+        'gps': gps,
         'Z_train': Z_train,
         'Y_train': Y_train,
-        'sampled_trajectory': sampled_trajectory,
-        'sampled_controls': sampled_controls,
-        'sampled_variances': sampled_variances
+        'sampled_trajectories': all_trajectories,
+        'sampled_controls': all_controls,
+        'sampled_variances': all_variances,
+        'sampled_state_variances': all_state_variances
     }
