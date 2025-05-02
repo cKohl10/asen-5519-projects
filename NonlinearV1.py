@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from GP_Train import defineKernel, trainGP, predictGP, split_data, optimize_hyperparameters
+from GP_TrainV1 import defineKernel, trainGP, predictGP, split_data, optimize_hyperparameters
 from tqdm import tqdm
 
 # Load both random and circular motion data for diverse training

@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from GP_Train import defineKernel, trainGP_V2
+from GP_TrainV2 import defineKernel, trainGP_V2
 from tqdm import tqdm
 
 print("Loading training data...")
