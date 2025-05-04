@@ -1,17 +1,20 @@
 from vehicle import MassSpringDamper, DubinsCar
 from policies import NoControl
 from environment import UnboundedPlane
-from train_EM import plot_data
+from utils.plotting import plot_data, plot_eig_stability
+from utils.common import cont2disc_AQ
 from scipy.linalg import expm
 import numpy as np
 import matplotlib.pyplot as plt
 
 def convert_lin_to_pred_dyn(theta, dt):
     # Convert continuous linear dynamics to discrete dynamics
-    A = expm(theta["A"]*dt)
+    plot_eig_stability(theta, "Continuous Dynamics: A")
+    A, Q = cont2disc_AQ(theta["A"], theta["Gamma"], dt)
 
     theta["A"] = A
-
+    theta["Gamma"] = Q
+    plot_eig_stability(theta, "Discrete Dynamics: A")
     return theta
 
 if __name__ == "__main__":
@@ -27,6 +30,7 @@ if __name__ == "__main__":
 
     theta = data["theta"]
     theta = theta.item()
+    theta["N"]=steps
 
     theta = convert_lin_to_pred_dyn(theta, dt)
 
@@ -36,6 +40,6 @@ if __name__ == "__main__":
     X, t, U, collision_flag = environment.epoch(animate=False, use_dynamics=False)
     pred_data = {"X_set": np.array(X), "t_set": np.array(t), "U_set": np.array(U)}
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+    fig, axes = plt.subplots(theta["Nx"], 1, figsize=(10, 8))
     fig = plot_data(axes, data, pred_data)
     plt.show()

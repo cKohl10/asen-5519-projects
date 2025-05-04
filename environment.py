@@ -1,6 +1,7 @@
 # Environment Definitions
 import matplotlib.pyplot as plt
 import numpy as np
+
 class Environment:
     def __init__(self):
         pass
@@ -16,6 +17,45 @@ class Environment:
 
     def train(self):
         pass
+
+class SimpleEnv(Environment):
+    def __init__(self, steps, dt, vehicle, policy, bounds=None):
+        super().__init__()
+        self.steps = steps
+        self.dt = dt
+        self.t = 0
+        self.vehicle = vehicle
+        self.policy = policy
+
+    def reset(self):
+        self.vehicle.reset()
+
+    def step(self, policy, discrete=True):
+        if discrete:
+            self.vehicle.discrete_step(policy, self.t)
+        else:
+            self.vehicle.continuous_step(policy, self.dt, self.t)
+        self.t = self.vehicle.current_time
+
+    def epoch(self, animate=False, plot_states=False, discrete=True, save_path=None):
+        for _ in range(self.steps):
+            self.step(self.policy, discrete)
+
+        if animate:
+            self.vehicle.plot_states()
+            ani = self.vehicle.animate(save_path=save_path)
+            plt.show()
+
+        if plot_states:
+            self.vehicle.plot_states()
+            plt.show()
+            
+        Z = self.vehicle.state_history
+        X = self.vehicle.obs_history
+        t = self.vehicle.time_history
+        U = self.vehicle.control_history
+
+        return Z, X, t, U
 
 class UnboundedPlane(Environment):
     def __init__(self, steps, dt, vehicle, policy, bounds=None):

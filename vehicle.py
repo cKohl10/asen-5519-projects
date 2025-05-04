@@ -3,9 +3,49 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
+
+class Theta:
+    def __init__(self, theta_set=None):
+        if theta_set is not None:
+            self.set_theta(theta_set)
+
+    def set_element(self, dict, element):
+        try:
+            return_element = dict[element]
+        except:
+            return_element = None
+        return return_element
+
+    def set_theta(self, theta_set):
+        self.A = self.set_element(theta_set, "A")
+        self.B = self.set_element(theta_set, "B")
+        self.C = self.set_element(theta_set, "C")
+        self.Gamma = self.set_element(theta_set, "Gamma")
+        self.Sigma = self.set_element(theta_set, "Sigma")
+        self.mu0 = self.set_element(theta_set, "mu0")
+        self.V0 = self.set_element(theta_set, "V0")
+        self.N = self.set_element(theta_set, "N")
+        self.Ns = self.set_element(theta_set, "Ns")
+        self.Nx = self.set_element(theta_set, "Nx")
+        self.Nu = self.set_element(theta_set, "Nu")
+        self.Nk = self.set_element(theta_set, "Nk")
+    
+    def unpack_theta(self):
+        return self.A, self.B, self.C, self.Gamma, self.Sigma, self.mu0, self.V0, self.N, self.Ns, self.Nx, self.Nu, self.Nk
+    
+    def get_theta_set(self):
+        theta_set = {}
+        for key, value in self.__dict__.items():
+            theta_set[key] = value
+        return theta_set
+    
+    def copy(self):
+        return Theta(self.get_theta_set())
+
 class Vehicle:
     def __init__(self):
-        self.state_history = [] # X
+        self.state_history = [] # Z
+        self.obs_history = [] # X
         self.time_history = [] # t
         self.control_history = [] # U
         self.current_time = 0
@@ -17,6 +57,7 @@ class Vehicle:
         self.state_history = []
         self.time_history = []
         self.control_history = []
+        self.obs_history = []
         self.current_time = 0
 
     def step(self, policy):
@@ -40,7 +81,7 @@ class Vehicle:
     def animate(self):
         pass
     
-    def plot_states(self, title=None, figsize=(12, 8), states_fig=None, controls_fig=None):
+    def plot_states(self, title=None, figsize=(12, 8), states_fig=None, controls_fig=None, obs_fig=None):
         """
         Plot all state variables over time.
         
@@ -57,12 +98,14 @@ class Vehicle:
             
         # Convert history lists to numpy arrays for easier manipulation
         states = np.array(self.state_history)
+        obs = np.array(self.obs_history)
         controls = np.array(self.control_history)
         times = np.array(self.time_history)
         
         # Get number of state and control variables
         n_states = states.shape[1]
         n_controls = controls.shape[1]
+        n_obs = obs.shape[1]
 
         # Create figure for states
         if states_fig is None:
@@ -81,6 +124,26 @@ class Vehicle:
         # Add labels and title for states
         axes_states[-1].set_xlabel('Time')
         fig_states.suptitle(f"{self.vehicle_name} States" if not title else f"{self.vehicle_name} States - {title}")
+
+        # Create figure for observations
+        if obs_fig is None:
+            fig_obs, axes_obs = plt.subplots(n_obs, 1, figsize=figsize, sharex=True)
+        else:
+            fig_obs, axes_obs = obs_fig, obs_fig.axes
+        if n_obs == 1:
+            axes_obs = [axes_obs]
+
+        # Plot each observation variable
+        for i in range(n_obs):
+            axes_obs[i].plot(times, obs[:, i])
+            axes_obs[i].set_ylabel(self.state_names[i])
+            axes_obs[i].grid(True)
+
+        # Add labels and title for observations
+        axes_obs[-1].set_xlabel('Time')
+        fig_obs.suptitle(f"{self.vehicle_name} Observations" if not title else f"{self.vehicle_name} Observations - {title}")
+            
+        plt.tight_layout()
         
         # Create separate figure for controls
         if controls_fig is None:
@@ -102,7 +165,54 @@ class Vehicle:
         fig_controls.suptitle("Controls" if not title else f"Controls - {title}")
 
         plt.tight_layout()
+
+class SimpleLinearModel(Vehicle):
+    def __init__(self, theta):
+        super().__init__()
+        self.state_names = []
+        self.vehicle_name = "Simple Linear Model"
+        self.set_dynamics(theta)
+        self.reset()
+
+    def reset(self, s0=None):
+        super().reset()
+        self.Ns = self.A.shape[0]
+        self.Nx = self.C.shape[0]
+        self.Nu = self.B.shape[1]
+        self.state_names = [f'x{i+1}' for i in range(self.Ns)]
+        self.z0 = self.mu0 + np.random.multivariate_normal(np.zeros(self.Ns), self.V0)
+        self.z = self.z0.copy()
+        self.state_history.append(self.z0.copy())
+        self.obs_history.append(self.C @ self.z0)
+        self.time_history.append(self.current_time)
+
+    def set_dynamics(self, theta):
+        self.theta = theta
+        self.A, self.B, self.C, self.Gamma, self.Sigma, self.mu0, self.V0, self.N, self.Ns, self.Nx, self.Nu, self.Nk = theta.unpack_theta()
     
+    def discrete_step(self, policy, t):
+        u = policy.get_action(self.z, t)
+        self.control_history.append(u.copy())
+        self.z = self.A @ self.z + self.B @ u + np.random.multivariate_normal(np.zeros(self.Ns), self.Gamma)
+        self.x = self.C @ self.z + np.random.multivariate_normal(np.zeros(self.Nx), self.Sigma)
+        self.current_time += 1
+        self.state_history.append(self.z.copy())
+        self.obs_history.append(self.x.copy())
+        self.time_history.append(self.current_time)
+        return self.z, self.x
+    
+    def continuous_step(self, policy, dt, t):
+        u = policy.get_action(self.z, t)
+        self.control_history.append(u.copy())
+        sdot = self.A @ self.z + self.B @ u + np.random.multivariate_normal(np.zeros(self.Ns), self.Gamma)
+        self.z = self.z + sdot * dt
+        self.x = self.C @ self.z + np.random.multivariate_normal(np.zeros(self.Nx), self.Sigma)
+        self.current_time += dt
+        self.state_history.append(self.z.copy())
+        self.obs_history.append(self.x.copy())
+        self.time_history.append(self.current_time)
+        return self.z, self.x
+
 class MassSpringDamper(Vehicle):
     def __init__(self, theta):
         super().__init__()
@@ -148,8 +258,8 @@ class MassSpringDamper(Vehicle):
             "mu0": self.mu0,
             "V0": self.V0,
             "B": self.B,
-            "N": N,
-            "Nx": 6,
+            "Ns": self.Ns,
+            "Nx": self.Nx,
             "Nu": self.Nu
         }
 

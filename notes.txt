@@ -1,4 +1,4 @@
 Tack on an extra term for the LL
 Excite each of the modes
 Matlab kalman filtering tutorial
-Validate the filter first
+Validate the filter first: https://nbviewer.org/github/rlabbe/Kalman-and-Bayesian-Filters-in-Python/blob/master/table_of_contents.ipynb
