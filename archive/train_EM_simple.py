@@ -177,7 +177,7 @@ def get_Gamma_new(theta, E2, E3, E4, A_new, multi=False):
     if not multi:
         elems = np.empty((0,Ns,Ns))
         for n in range(1, N):
-            elems_n = E4[n] - A_new @ E3[n-1].T - E2[n-1] @ A_new.T + A_new @ E4[n-1] @ A_new.T
+            elems_n = (E4[n] - A_new @ E3[n-1] - E2[n-1] @ A_new.T + A_new @ E4[n-1] @ A_new.T)
             elems = np.vstack((elems, [elems_n]))
         return np.sum(elems, axis=0) / (N-1)
     else:
@@ -185,7 +185,7 @@ def get_Gamma_new(theta, E2, E3, E4, A_new, multi=False):
         for k in range(Nk):
             elems = np.empty((0,Ns,Ns))
             for n in range(1, N):
-                elems_n = E4[k, n] - A_new @ E3[k, n-1].T - E2[k, n-1] @ A_new.T + A_new @ E4[k, n-1] @ A_new.T
+                elems_n = E4[k, n] - A_new @ E3[k, n-1] - E2[k, n-1] @ A_new.T + A_new @ E4[k, n-1] @ A_new.T
                 elems = np.vstack((elems, [elems_n]))
             Gamma_k += np.sum(elems, axis=0)
         return Gamma_k / (Nk*(N-1))
@@ -246,7 +246,7 @@ def get_Sigma_new(theta, E1, E4, C_new, X, multi=False):
                 E1_n_T = E1_n.T
                 elem_n = x_n_T @ x_n - C_new @ E1_n_T @ x_n - x_n_T @ E1_n @ C_new.T + C_new @ E4[k, n] @ C_new.T
                 elems = np.vstack((elems, [elem_n]))
-            Sigma_sum += np.sum(elems, axis=0) / N
+            Sigma_sum += np.sum(elems, axis=0)
         return Sigma_sum / (Nk*N)
 
 def maximization(theta, X, E1, E2, E3, E4):
@@ -261,44 +261,21 @@ def maximization(theta, X, E1, E2, E3, E4):
 
     return mu0, V0, A_new, Gamma_new, C_new, Sigma_new
 
-# def maximization_multi(theta, X, E1, E2, E3, E4):
-
-#     theta_new = theta.copy()
-#     theta_new.mu0 = get_mu0_new(theta, E1, multi=True)
-#     theta_new.V0 = get_V0_new(theta, E1, E4, multi=True)
-
-#     A_new = get_A_new(theta, E2, E4, multi=True)
-#     theta_new.A = A_new
-#     theta_new.Gamma = get_Gamma_new(theta, E2, E3, E4, A_new, multi=True)
-
-#     # C_new = get_C_new(theta, E1, E4, X, multi=True)
-#     # theta_new.C = C_new
-#     # theta_new.Sigma = get_Sigma_new(theta, E1, E4, C_new, X, multi=True)
-
-#     return theta_new
-
 def maximization_multi(theta, X, E1, E2, E3, E4):
 
     theta_new = theta.copy()
-    mu0 = np.zeros((np.shape(theta.mu0)))
-    V0 = np.zeros((np.shape(theta.V0)))
-    A = np.zeros((np.shape(theta.A)))
-    Gamma = np.zeros((np.shape(theta.Gamma)))
-    C = np.zeros((np.shape(theta.C)))
-    Sigma = np.zeros((np.shape(theta.Sigma)))
-    
-    for k in range(theta.Nk):
-        X_k = X[:,:,k]
+    theta_new.mu0 = get_mu0_new(theta, E1, multi=True)
+    theta_new.V0 = get_V0_new(theta, E1, E4, multi=True)
 
+    A_new = get_A_new(theta, E2, E4, multi=True)
+    theta_new.A = A_new
+    theta_new.Gamma = get_Gamma_new(theta, E2, E3, E4, A_new, multi=True)
 
-    # C_new = get_C_new(theta, E1, E4, X, multi=True)
-    # theta_new.C = C_new
-    # theta_new.Sigma = get_Sigma_new(theta, E1, E4, C_new, X, multi=True)
+    C_new = get_C_new(theta, E1, E4, X, multi=True)
+    theta_new.C = C_new
+    theta_new.Sigma = get_Sigma_new(theta, E1, E4, C_new, X, multi=True)
 
-    return theta_new
-    
-    
-    
+    return theta_new    
 
 ## --- Calculate Q ---
 def calculate_Q(theta_old, X, E1, E2, E4):
@@ -409,70 +386,79 @@ def train_EM_multi(data, opt):
     theta_hist = []
     
     for j in range(max_iter):
+        try:
+            # Initialize E1, E2, E3, E4
+            E1 = np.empty((0, N, Ns))
+            E2 = np.empty((0, N-1, Ns, Ns))
+            E3 = np.empty((0, N-1, Ns, Ns))
+            E4 = np.empty((0, N, Ns, Ns))
 
-        # Initialize E1, E2, E3, E4
-        E1 = np.empty((0, N, Ns))
-        E2 = np.empty((0, N-1, Ns, Ns))
-        E3 = np.empty((0, N-1, Ns, Ns))
-        E4 = np.empty((0, N, Ns, Ns))
+            # Calculate E1, E2, E3, E4 for each trajectory
+            for k in range(Nk):
+                X_k = data["X_set"][:,:,k]
+                mu_k, V_k = kalman_filter(theta, X_k)
+                mu_hat_k, V_hat_k = kalman_smoother(theta, X_k, mu_k, V_k)
 
-        # Calculate E1, E2, E3, E4 for each trajectory
-        for k in range(Nk):
-            X_k = data["X_set"][:,:,k]
-            mu_k, V_k = kalman_filter(theta, X_k)
-            mu_hat_k, V_hat_k = kalman_smoother(theta, X_k, mu_k, V_k)
+                E1_k = get_E1(mu_hat_k)
+                E2_k, E3_k = get_E2_E3(theta, V_k, mu_hat_k, V_hat_k)
+                E4_k = get_E4(theta, mu_hat_k, V_hat_k)
 
-            E1_k = get_E1(mu_hat_k)
-            E2_k, E3_k = get_E2_E3(theta, V_k, mu_hat_k, V_hat_k)
-            E4_k = get_E4(theta, mu_hat_k, V_hat_k)
+                E1 = np.vstack((E1, [E1_k]))
+                E2 = np.vstack((E2, [E2_k]))
+                E3 = np.vstack((E3, [E3_k]))
+                E4 = np.vstack((E4, [E4_k]))
 
-            E1 = np.vstack((E1, [E1_k]))
-            E2 = np.vstack((E2, [E2_k]))
-            E3 = np.vstack((E3, [E3_k]))
-            E4 = np.vstack((E4, [E4_k]))
+            X = data["X_set"]
+            # Take a summed Maximization step
+            theta_new = maximization_multi(theta, X, E1, E2, E3, E4)
 
-        X = data["X_set"]
-        # Take a summed Maximization step
-        theta_new = maximization_multi(theta, X, E1, E2, E3, E4)
-
-        # Calculate Q
-        Q = calculate_Q_multi(theta, X, E1, E2, E3, E4)
-        if np.isnan(Q):
-            print(f"Error occurred at iteration {j}: Q = {Q}")
-            break
-        theta = theta_new
-        Q_hist.append(Q)
-        theta_hist.append(theta.copy())
-
-        print(f"Iteration {j} completed: Q = {Q}")
-
-        # Check convergence
-        if len(Q_hist) > 1:
-            if np.abs(Q_hist[-1] - Q_hist[-2]) < tol:
+            # Calculate Q
+            Q = calculate_Q_multi(theta, X, E1, E2, E3, E4)
+            if np.isnan(Q):
+                print(f"Error occurred at iteration {j}: Q = {Q}")
                 break
+            theta = theta_new
+            Q_hist.append(Q)
+            theta_hist.append(theta.copy())
+
+            print(f"Iteration {j} completed: Q = {Q}")
+
+            # Check convergence
+            if len(Q_hist) > 1:
+                if np.abs(Q_hist[-1] - Q_hist[-2]) < tol:
+                    break
+        except KeyboardInterrupt:
+            print("\nTraining interrupted by user. Returning current results.")
+            break
 
     return theta, Q_hist, theta_hist
     
 
 if __name__ == "__main__":
+
+    # Hyper parameters
+    save_name = "simple_linear_model" # Name of the data to load
+    # save_name = "spring_damper_perfect"
+    opt = {"max_iter": 1000, "tol": 1e-1} # EM algorithm parameters
+
     try:
-        data = np.load("asen-5519-projects/data/simple_linear_model.npz", allow_pickle=True)
+        data = np.load(f"asen-5519-projects/data/{save_name}.npz", allow_pickle=True)
     except:
-        data = np.load("data/simple_linear_model.npz", allow_pickle=True)
+        data = np.load(f"data/{save_name}.npz", allow_pickle=True)
 
     theta_true = data["theta"].item()
     theta_true.N = data["t_set"].shape[0]
     data_fig, axes = plt.subplots(theta_true.Nx, 1, figsize=(10, 8))
-    plot_data(axes, data)
+    plot_data(axes, data) # Visualize the data being loaded in
 
-    opt = {"max_iter": 1000, "tol": 1e-1}
-    # theta, Q_hist, theta_hist = train_EM_multi(data, opt)
-    theta, Q_hist, theta_hist = train_EM_single(data, opt)
+    theta = initialize_params(data) # Initialize the parameters
+    theta, Q_hist, theta_hist = train_EM_multi(data, opt) # Train the EM algorithm
+    # theta, Q_hist, theta_hist = train_EM_single(data, opt)
 
-    plot_theta_diffs(theta_hist, theta_true)
-    plot_loss(Q_hist)
+    plot_theta_diffs(theta_hist, theta_true, save_path=f"figs/{save_name}_theta_diffs.png") # Visualize the theta diffs
+    plot_loss(Q_hist, save_path=f"figs/{save_name}_loss.png") # Visualize the loss
 
-    try:
+    try: # Simulate a trajectory with the learned parameters
         vehicle = SimpleLinearModel(theta)
         policy = NoControl()
 
@@ -483,7 +469,7 @@ if __name__ == "__main__":
         environment = SimpleEnv(steps, dt, vehicle, policy)
         Z, X, t, U = environment.epoch(animate=False, discrete=True)
         pred_data = {"Z_set": np.array(Z), "X_set": np.array(X), "t_set": np.array(t), "U_set": np.array(U)}
-        fig = plot_data(axes, data, predicted_data=pred_data)
+        fig = plot_data(axes, data, predicted_data=pred_data, save_path=f"figs/{save_name}_predicted_data.png")
     
     except Exception as e:
         print(f"Error occurred: {str(e)}")

@@ -2,3 +2,6 @@
 *.code-workspace
 venv/
 *.pdf
+figs/
+data/
+papers/

@@ -1,6 +1,8 @@
 # Environment Definitions
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
+from utils.common import cont2disc_AQ
 
 class Environment:
     def __init__(self):
@@ -29,26 +31,27 @@ class SimpleEnv(Environment):
 
     def reset(self):
         self.vehicle.reset()
+        self.t = 0
 
     def step(self, policy, discrete=True):
         if discrete:
-            self.vehicle.discrete_step(policy, self.t)
+            self.vehicle.discrete_step(policy, self.dt, self.t)
         else:
             self.vehicle.continuous_step(policy, self.dt, self.t)
         self.t = self.vehicle.current_time
 
     def epoch(self, animate=False, plot_states=False, discrete=True, save_path=None):
-        for _ in range(self.steps):
+        for _ in range(self.steps-1):
             self.step(self.policy, discrete)
 
         if animate:
             self.vehicle.plot_states()
             ani = self.vehicle.animate(save_path=save_path)
-            plt.show()
+            plt.show(block=False)
 
         if plot_states:
             self.vehicle.plot_states()
-            plt.show()
+            plt.show(block=False)
             
         Z = self.vehicle.state_history
         X = self.vehicle.obs_history
@@ -56,6 +59,51 @@ class SimpleEnv(Environment):
         U = self.vehicle.control_history
 
         return Z, X, t, U
+    
+    def generate_data(self, iterations, save_path=None, save_name=None, animate=True, discrete=True):
+        # Case where the system is localized by a "CV" algorithm with noise and only the position is observed
+        # Data will be in the size of (Nx, steps, data_size)
+        data_size = iterations
+        X_set = np.zeros((self.steps, self.vehicle.theta.Nx, data_size)) # Noisy data
+        Z_set = np.zeros((self.steps, self.vehicle.theta.Ns, data_size)) # Noisy data
+        t_set = np.zeros((self.steps, data_size))
+        U_set = np.zeros((self.steps-1, self.vehicle.theta.Nu, data_size)) # One less control than steps to account for initial state
+
+        i = 0
+        pbar = tqdm(total=data_size, desc="Generating data")
+        while i < data_size:
+            self.reset()
+
+            # Load the environment
+            if i == 0:
+                # X, t, U, collision_flag = environment.epoch(animate=True, save_path=f"animations/mass_spring_damper_{save_name}.gif")
+            
+                Z, X, t, U = self.epoch(animate=animate, plot_states=True, discrete=discrete)
+            else:
+                Z, X, t, U = self.epoch(discrete=discrete)
+
+            # Unwrap list of states into a single array
+            Z = np.array(Z)
+            X = np.array(X)
+            U = np.array(U)
+            Z_set[:, :, i] = Z
+            X_set[:, :, i] = X
+            t_set[:, i] = t
+            U_set[:, :, i] = U
+
+            pbar.update(1)
+            i += 1
+
+        pbar.close()
+
+        theta = self.vehicle.get_theta()
+        if not discrete:
+            theta.A, theta.Gamma = cont2disc_AQ(theta.A, theta.Gamma, self.dt)
+
+        if save_path is not None:
+            np.savez(save_path + save_name + ".npz", Z_set=Z_set, X_set=X_set, t_set=t_set, U_set=U_set, theta=theta)
+
+        return Z_set, X_set, t_set, U_set
 
 class UnboundedPlane(Environment):
     def __init__(self, steps, dt, vehicle, policy, bounds=None):
