@@ -69,9 +69,16 @@ def defineKernel(Z1,Z2,theta_idx=2,length_scale=1.0,sigma=1.0,period = 2*np.pi):
     # RBF kernel on remaining dimensions
     Z1_rbf = np.delete(Z1, theta_idx, axis=1)
     Z2_rbf = np.delete(Z2, theta_idx, axis=1)
+    
+    # Ensure dimensions match for dot product
+    if Z1_rbf.shape[1] != Z2_rbf.shape[1]:
+        raise ValueError(f"Dimension mismatch in RBF kernel computation: {Z1_rbf.shape} vs {Z2_rbf.shape}")
+    
     sqdist = np.sum(Z1_rbf**2, axis=1).reshape(-1, 1) + \
             np.sum(Z2_rbf**2, axis=1) - 2 * np.dot(Z1_rbf, Z2_rbf.T)
-    K_rbf = np.exp(-0.5 * sqdist / length_scale**2)
+    K_rbf = np.exp(-0.5 * sqdist / (length_scale**2))
+    
+    # Combine kernels with proper scaling
     return sigma**2 * K_rbf * K_theta
 
 def predictGP(z_star, model):
@@ -199,3 +206,5 @@ def split_data(data, traj_idx=0, split_index=200):
     U_test = U_full[split_index:]       # will be (T - split_index)
 
     return (X_train, U_train), (X_test, U_test)
+
+
