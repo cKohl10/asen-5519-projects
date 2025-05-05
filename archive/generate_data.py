@@ -5,8 +5,10 @@ from tqdm import tqdm
 from environment import UnboundedPlane
 from vehicle import MassSpringDamper
 from policies import StepPolicy, NoControl, SinePolicy, StateReferenceFeedbackPolicy
-    
-def generate_data(policy, vehicle, theta, sim_params, save_path=None, save_name=None):
+from utils.plotting import plot_eig_stability
+import matplotlib.pyplot as plt
+
+def generate_data(policy, vehicle, theta, sim_params, save_path=None, save_name=None, animate=True):
     # Case where the system is localized by a "CV" algorithm with noise and only the position is observed
     # Data will be in the size of (Nx, steps, data_size)
     steps = sim_params["steps"]
@@ -14,8 +16,9 @@ def generate_data(policy, vehicle, theta, sim_params, save_path=None, save_name=
     data_size = sim_params["data_size"]
     allow_collision = sim_params["allow_collision"] 
     frame_removal_rate = sim_params["frame_removal_rate"]
-    Nu = vehicle.Nu
-    Nx = vehicle.Nx
+    Ns = theta["Ns"]
+    Nx = theta["Nx"]
+    Nu = theta["Nu"]
     X_set = np.zeros((steps//frame_removal_rate+1, Nx, data_size)) # Noisy data
     t_set = np.zeros((steps//frame_removal_rate+1, data_size))
     U_set = np.zeros((steps//frame_removal_rate, Nu, data_size)) # One less control than steps to account for initial state
@@ -30,7 +33,7 @@ def generate_data(policy, vehicle, theta, sim_params, save_path=None, save_name=
         # Load the environment
         if i == 0:
             # X, t, U, collision_flag = environment.epoch(animate=True, save_path=f"animations/mass_spring_damper_{save_name}.gif")
-            X, t, U, collision_flag = environment.epoch(animate=True)
+            X, t, U, collision_flag = environment.epoch(animate=animate)
         else:
             X, t, U, collision_flag = environment.epoch()
 
@@ -56,18 +59,19 @@ def generate_data(policy, vehicle, theta, sim_params, save_path=None, save_name=
 
 if __name__ == "__main__":
     # Load the policy
-    dt = 0.2
+    dt = 0.1
     steps = 1000
-    data_size = 10
+    data_size = 2
     vel_bound = 0.1 # Randomized starting velocity bounds
     noise_level = 0.0005 # Gaussian noise level for the position
     frame_removal_rate = 1 # Take every X frames
+    Nx = 6 # Number of observable states
 
     # Parameters for the system
     # m1, m2, k1, k2, b, r, cor
-    m1 = 10 #Kg
-    m2 = 20 #Kg
-    k1 = 5 #N/m
+    m1 = 5 #Kg
+    m2 = 10 #Kg
+    k1 = 4 #N/m
     k2 = 5 #N/m
     b = 5 #N*s/m
     r = 0.3 #m
@@ -87,9 +91,8 @@ if __name__ == "__main__":
     theta = {
         "A": np.zeros((6,6)), # Overwriten later
         "Gamma": np.zeros((6,6)), # No state transition noise
-        "C": np.array([[1, 0, 0, 0, 0, 0],
-                       [0, 1, 0, 0, 0, 0]]), # Output only position
-        "Sigma": np.zeros((2,2)), # No noise on position
+        "C": np.eye(6)[:Nx, :], # Output only position
+        "Sigma": np.zeros((Nx, Nx)), # No noise on position
         "mu0": np.array([1, 2, 0, 0, 0, 0]).T, # Initial state mean
         "V0": np.array([[0.001, 0, 0, 0, 0, 0],
                         [0, 0.001, 0, 0, 0, 0],
@@ -99,28 +102,24 @@ if __name__ == "__main__":
                         [0, 0, 0, 0, 0, 0.001]]) * vel_bound, # Initial state covariance on velocity only
         "B": np.zeros((6,2)), # Overwriten later
         "N": steps,
-        "Nx": 6,
+        "Ns": 6,
+        "Nx": Nx,
         "Nu": 2
     }
     vehicle = MassSpringDamper(theta)
     vehicle.p_to_dynamics(p)
     theta = vehicle.get_theta(steps )
-    generate_data(policy, vehicle, theta, sim_params, save_path="data/", save_name=f"perfect_data.npz")
+    plot_eig_stability(theta, "Perfect Data: A")
+    plt.show()
+    generate_data(policy, vehicle, theta, sim_params, save_path="data/", save_name=f"perfect_data.npz", animate=True)
 
     # --- Noisy data ---
     theta = {
         "A": np.zeros((6,6)), # Overwriten later
-        "Gamma": np.zeros((6,6)), # No state transition noise
-        # "Gamma": np.array([[0.01, 0, 0, 0, 0, 0],
-        #                    [0, 0.01, 0, 0, 0, 0],
-        #                    [0, 0, 0.01, 0, 0, 0],
-        #                    [0, 0, 0, 0.01, 0, 0],
-        #                    [0, 0, 0, 0, 0.01, 0],
-        #                    [0, 0, 0, 0, 0, 0.01]]) * noise_level, # state transition noise
-        "C": np.array([[1, 0, 0, 0, 0, 0],
-                       [0, 1, 0, 0, 0, 0]]), # Output only position
-        "Sigma": np.array([[noise_level, 0],
-                           [0, noise_level]]), # Gaussian noise on position
+        # "Gamma": np.zeros((6,6)), # No state transition noise
+        "Gamma": np.eye(6) * noise_level*0.01, # state transition noise
+        "C": np.eye(6)[:Nx, :], # Output only position
+        "Sigma": np.eye(Nx) * noise_level, # No noise on position
         "mu0": np.array([1, 2, 0, 0, 0, 0]).T, # Initial state mean
         "V0": np.array([[0.001, 0, 0, 0, 0, 0],
                         [0, 0.001, 0, 0, 0, 0],
@@ -130,10 +129,11 @@ if __name__ == "__main__":
                         [0, 0, 0, 0, 0, 0.001]]) * vel_bound, # Initial state covariance
         "B": np.zeros((6,2)), # Overwriten later
         "N": steps,
-        "Nx": 6,
+        "Ns": 6,
+        "Nx": Nx,
         "Nu": 2
     }
     vehicle = MassSpringDamper(theta)
     vehicle.p_to_dynamics(p)
     theta = vehicle.get_theta(steps)
-    generate_data(policy, vehicle, theta, sim_params, save_path="data/", save_name=f"noisy_data.npz")
+    generate_data(policy, vehicle, theta, sim_params, save_path="data/", save_name=f"noisy_data.npz", animate=False)
