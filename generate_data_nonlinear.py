@@ -46,7 +46,7 @@ if __name__ == "__main__":
     # Simulation parameters
     dt = 0.1
     steps = 500
-    data_size = 100
+    data_size = 1
     
     # Initial state uncertainty
     pos_bound = 1.0  # Random initial position within ±1m
