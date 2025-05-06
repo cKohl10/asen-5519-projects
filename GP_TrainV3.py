@@ -14,11 +14,7 @@ def defineKernel(Z1,Z2,theta_idx=2,length_scale=1.0,sigma=1.0,period = 2*np.pi):
     # RBF kernel on remaining dimensions
     Z1_rbf = np.delete(Z1, theta_idx, axis=1)
     Z2_rbf = np.delete(Z2, theta_idx, axis=1)
-    
-    # Ensure dimensions match for dot product
-    if Z1_rbf.shape[1] != Z2_rbf.shape[1]:
-        raise ValueError(f"Dimension mismatch in RBF kernel computation: {Z1_rbf.shape} vs {Z2_rbf.shape}")
-    
+
     sqdist = np.sum(Z1_rbf**2, axis=1).reshape(-1, 1) + \
             np.sum(Z2_rbf**2, axis=1) - 2 * np.dot(Z1_rbf, Z2_rbf.T)
     K_rbf = np.exp(-0.5 * sqdist / (length_scale**2))
@@ -27,7 +23,7 @@ def defineKernel(Z1,Z2,theta_idx=2,length_scale=1.0,sigma=1.0,period = 2*np.pi):
     return sigma**2 * K_rbf * K_theta
 
 def train_gp(Z_train, Y_train_d, Theta_idx,length_scale, sigma_f, sigma_n):
-    """Helper function to train a single GP"""
+    "Function to Train the GP Given Training Data"
     
     K = defineKernel(Z_train, Z_train, Theta_idx, length_scale=length_scale, sigma=sigma_f)
     K += sigma_n**2 * np.eye(len(Z_train))
@@ -46,12 +42,11 @@ def train_gp(Z_train, Y_train_d, Theta_idx,length_scale, sigma_f, sigma_n):
         'kernel_inv': K_inv,
         'params': {'length_scale': length_scale, 'sigma_f': sigma_f, 'sigma_n': sigma_n}
     }
-# Train three seperate GPs for each state dimension
+
 def trainGP_V3(X, U, training_points=300, sampling_steps=200, length_scale=1.0, sigma_f=1.0, sigma_n=1e-6, num_trajectories=20,training_method="random"):
     """
-    Train three separate GP models (one for each state dimension) on training points and then sequentially sample and update.
-    Control is treated as input, and each GP predicts its corresponding state change.
-    
+    Function to Train a GP and then simulate the system with the GP
+        
     Args:
         X: State data of shape (T+1, Nx)
         U: Control data of shape (T, Nu)
@@ -63,7 +58,7 @@ def trainGP_V3(X, U, training_points=300, sampling_steps=200, length_scale=1.0, 
         num_trajectories: Number of trajectories to sample
         
     Returns:
-        Dictionary containing the three GP models and sampled trajectories
+        Dictionary containing the GP model and sampled trajectories
     """
     # Ensure inputs are 2D arrays
     X = np.atleast_2d(X)

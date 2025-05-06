@@ -3,17 +3,7 @@ import matplotlib.pyplot as plt
 from GP_TrainV3 import trainGP_V3
 from tqdm import tqdm
 
-# Set default font sizes for LaTeX compatibility
-plt.rcParams.update({
-    'font.size': 16,
-    'axes.titlesize': 18,
-    'axes.labelsize': 16,
-    'xtick.labelsize': 14,
-    'ytick.labelsize': 14,
-    'legend.fontsize': 14,
-    'figure.figsize': (10, 8)  # Smaller figure size
-})
-
+# Load Data
 print("Loading training data...")
 circ_data = np.load('data/dubins_circular_motion.npz')
 
@@ -24,6 +14,7 @@ t = circ_data['t_set'][:,0]
 num_train = 300;
 num_test = 500-num_train;
 
+######################### Random Training ############
 model_random = trainGP_V3(X, U, 
                 training_points=num_train,
                 sampling_steps=num_test,
@@ -32,6 +23,7 @@ model_random = trainGP_V3(X, U,
                 sigma_n=0.05,
                 num_trajectories=30,training_method="random")
 
+######################### Sequential Training ############
 model_sequential = trainGP_V3(X, U, 
                 training_points=num_train,
                 sampling_steps=num_test,
@@ -49,8 +41,19 @@ sampled_trajectories_sequential = np.array(model_sequential['sampled_trajectorie
 mean_trajectory_sequential = np.mean(sampled_trajectories_sequential, axis=0)  # Average across trajectories
 variance_trajectory_sequential = np.var(sampled_trajectories_sequential, axis=0)  # Variance across trajectories
  
-
-# Plot all sampled trajectories for each state
+ 
+######################### Plotting ############
+# Set Default Plot Parameters
+plt.rcParams.update({
+    'font.size': 16,
+    'axes.titlesize': 18,
+    'axes.labelsize': 16,
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 14,
+    'figure.figsize': (10, 8) 
+})
+############ Plot all sampled trajectories for each state for random training ############
 plt.figure(figsize=(10, 8))
 
 # Plot x position trajectories
@@ -87,9 +90,10 @@ plt.ylabel(r"$\theta$ [rad]", fontsize=16)
 plt.grid(True)
 plt.tight_layout()
 plt.suptitle(r"Random Training Sampled Trajectories", fontsize=20)
-plt.subplots_adjust(hspace=0.54,top=0.9)  # Increased spacing between subplots
+plt.subplots_adjust(hspace=0.54,top=0.9) 
 
-# Plot all sampled trajectories for each state
+
+############ Plot all sampled trajectories for each state for sequential training ############
 plt.figure(figsize=(10, 8))
 
 # Plot x position trajectories
@@ -125,10 +129,10 @@ plt.xlabel("Time (s)", fontsize=16)
 plt.ylabel(r"$\theta$ [rad]", fontsize=16)
 plt.grid(True)
 plt.tight_layout()
-plt.subplots_adjust(hspace=0.54,top=0.9)  # Increased spacing between subplots
+plt.subplots_adjust(hspace=0.54,top=0.9)
 plt.suptitle(r"Sequential Training Sampled Trajectories", fontsize=20)
 
-# Plot the mean and variance of the trajectories
+############ Plot the mean and variance of the trajectories for random training ############
 plt.figure(figsize=(10, 8))
 # Plot x position
 plt.subplot(3, 1, 1)
@@ -173,11 +177,11 @@ plt.ylabel(r"$\theta$ [rad]", fontsize=16)
 plt.grid(True)
 plt.suptitle(r"Random Training Predicted Trajectory", fontsize=20)
 plt.tight_layout()
-plt.subplots_adjust(hspace=0.54,top=0.9)  # Increased spacing between subplots
+plt.subplots_adjust(hspace=0.54,top=0.9) 
 
 
 
-# Plot the mean and variance of the trajectories
+############ Plot the mean and variance of the trajectories for sequential training ############
 plt.figure(figsize=(10, 8))
 # Plot x position
 plt.subplot(3, 1, 1)
@@ -223,7 +227,7 @@ plt.suptitle(r"Sequential Training Predicted Trajectory", fontsize=20)
 plt.grid(True)
 
 plt.tight_layout()
-plt.subplots_adjust(hspace=0.54,top=0.9)  # Increased spacing between subplots
+plt.subplots_adjust(hspace=0.54,top=0.9)
 
 # Plot State error Vs time for each state
 plt.figure(figsize=(10, 8))
@@ -255,5 +259,15 @@ plt.ylabel("Error", fontsize=16)
 plt.grid(True)
 
 plt.tight_layout()
-plt.subplots_adjust(hspace=0.54,top=0.9)  # Increased spacing between subplots
+plt.subplots_adjust(hspace=0.54,top=0.9)
 plt.show()
+
+############ Display the average error for each state ############
+print(f"Average x error: {np.mean(abs(X[num_train:, 0] - mean_trajectory_random[:, 0]))}")
+print(f"Average y error: {np.mean(abs(X[num_train:, 1] - mean_trajectory_random[:, 1]))}")
+print(f"Average theta error: {np.mean(abs(X[num_train:, 2] - mean_trajectory_random[:, 2]))}")
+
+print(f"Average x error: {np.mean(abs(X[num_train:, 0] - mean_trajectory_sequential[:, 0]))}")
+print(f"Average y error: {np.mean(abs(X[num_train:, 1] - mean_trajectory_sequential[:, 1]))}")
+print(f"Average theta error: {np.mean(abs(X[num_train:, 2] - mean_trajectory_sequential[:, 2]))}")
+
