@@ -60,7 +60,7 @@ class SimpleEnv(Environment):
 
         return Z, X, t, U
     
-    def generate_data(self, iterations, save_path=None, save_name=None, animate=True, discrete=True):
+    def generate_data(self, iterations, save_path=None, save_name=None, animate=True, discrete=True, plot_states=True, nyquist_freq=None):
         # Case where the system is localized by a "CV" algorithm with noise and only the position is observed
         # Data will be in the size of (Nx, steps, data_size)
         data_size = iterations
@@ -68,6 +68,10 @@ class SimpleEnv(Environment):
         Z_set = np.zeros((self.steps, self.vehicle.theta.Ns, data_size)) # Noisy data
         t_set = np.zeros((self.steps, data_size))
         U_set = np.zeros((self.steps-1, self.vehicle.theta.Nu, data_size)) # One less control than steps to account for initial state
+
+        if nyquist_freq is not None:
+            self.dt = self.dt / nyquist_freq
+            self.steps = self.steps * nyquist_freq
 
         i = 0
         pbar = tqdm(total=data_size, desc="Generating data")
@@ -78,7 +82,7 @@ class SimpleEnv(Environment):
             if i == 0:
                 # X, t, U, collision_flag = environment.epoch(animate=True, save_path=f"animations/mass_spring_damper_{save_name}.gif")
             
-                Z, X, t, U = self.epoch(animate=animate, plot_states=True, discrete=discrete)
+                Z, X, t, U = self.epoch(animate=animate, plot_states=plot_states, discrete=discrete)
             else:
                 Z, X, t, U = self.epoch(discrete=discrete)
 
@@ -86,6 +90,16 @@ class SimpleEnv(Environment):
             Z = np.array(Z)
             X = np.array(X)
             U = np.array(U)
+            
+            # Get every nyquist_freq frame if specified
+            if nyquist_freq is not None:
+                Z = Z[::nyquist_freq]
+                X = X[::nyquist_freq]
+                t = t[::nyquist_freq]
+                U = U[::nyquist_freq]
+                if len(U) > np.shape(U_set)[0]:
+                    U = U[:np.shape(U_set)[0]]
+            
             Z_set[:, :, i] = Z
             X_set[:, :, i] = X
             t_set[:, i] = t

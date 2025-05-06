@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from utils.common import unpack_theta
+import math # Import math for ceil
 
 def plot_data(data, predicted_data=None, save_path=None):
     X_set = data["X_set"]
@@ -27,6 +28,123 @@ def plot_data(data, predicted_data=None, save_path=None):
 
     if save_path is not None:
         fig.savefig(save_path)
+
+def prediction_plot(data, predicted_data, suptitle=None, save_path=None):
+    X_true = data["X_set"]
+    Z_true = data["Z_set"]
+    t_true = data["t_set"][:,0]
+    X_pred = predicted_data["X_set"]
+    Z_pred = predicted_data["Z_set"]
+    t_pred = predicted_data["t_set"][:,0]
+
+    Nx = X_true.shape[1]
+    Ns = Z_true.shape[1]
+
+    axes_labels = ["M_1 Position (m)", 
+                   "M_2 Position (m)",
+                   "M_1 Velocity (m/s)",
+                   "M_2 Velocity (m/s)",
+                   "Spring 1 Force (N)",
+                   "Spring 2 Force (N)",
+                   ]
+    
+    axes_titles = ["M_1 Position Rollout",
+                   "M_2 Position Rollout",
+                   "M_1 Velocity Rollout",
+                   "M_2 Velocity Rollout",
+                   "Spring 1 Force Rollout",
+                   "Spring 2 Force Rollout",
+                   ]
+
+    # Figure for the observed states X
+    if Nx >= 4:
+        n_cols_x = 2
+        n_rows_x = math.ceil(Nx / n_cols_x)
+        fig_x, axes_x = plt.subplots(n_rows_x, n_cols_x, figsize=(10, 2 * n_rows_x))
+        axes_x = axes_x.flatten()
+    else:
+        n_cols_x = 1
+        n_rows_x = Nx
+        fig_x, axes_x = plt.subplots(n_rows_x, n_cols_x, figsize=(10, 2 * n_rows_x))
+        if Nx == 1:
+            axes_x = [axes_x]
+
+    for i in range(Nx):
+        ax = axes_x[i]
+        # Compute y-limits from all true trajectories for this state
+        y_true = X_true[:, i, :].flatten()
+        y_min = np.min(y_true)
+        y_max = np.max(y_true)
+        y_range = y_max - y_min
+        ax.set_ylim(y_min - 0.5 * y_range, y_max + 0.5 * y_range)
+
+        for j in range(X_pred.shape[2]):
+            X_pred_j = X_pred[:,:,j]
+            if j == 0:
+                ax.plot(t_pred, X_pred_j[:,i], color='red', label='Predicted')
+            else:
+                ax.plot(t_pred, X_pred_j[:,i], color='red', alpha=0.5)
+        for j in range(X_true.shape[2]):
+            X_true_j = X_true[:,:,j]
+            if j == 0:
+                ax.plot(t_true, X_true_j[:,i], color='blue', label='True')
+            else:
+                ax.plot(t_true, X_true_j[:,i], color='blue', alpha=0.2)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel(axes_labels[i])
+        ax.set_title("Observed " + axes_titles[i])
+        ax.grid(True)
+        if i == 0:
+            ax.legend()
+    fig_x.suptitle(suptitle + " Observed States")
+    plt.tight_layout()
+
+    # Figure for the latent states Z
+    if Ns >= 6:
+        n_cols_z = 2
+        n_rows_z = math.ceil(Ns / n_cols_z)
+        fig_z, axes_z = plt.subplots(n_rows_z, n_cols_z, figsize=(10, 2 * n_rows_z))
+        axes_z = axes_z.flatten()
+    else:
+        n_cols_z = 1
+        n_rows_z = Ns
+        fig_z, axes_z = plt.subplots(n_rows_z, n_cols_z, figsize=(10, 2 * n_rows_z))
+        if Ns == 1:
+            axes_z = [axes_z]
+
+    for i in range(Ns):
+        ax = axes_z[i]
+        # Compute y-limits from all true trajectories for this latent state
+        y_true = Z_true[:, i, :].flatten()
+        y_min = np.min(y_true)
+        y_max = np.max(y_true)
+        y_range = y_max - y_min
+        ax.set_ylim(y_min - 0.5 * y_range, y_max + 0.5 * y_range)
+
+        for j in range(Z_pred.shape[2]):
+            Z_pred_j = Z_pred[:,:,j]
+            if j == 0:
+                ax.plot(t_pred, Z_pred_j[:,i], color='red', label='Predicted')
+            else:
+                ax.plot(t_pred, Z_pred_j[:,i], color='red', alpha=0.5)
+        for j in range(Z_true.shape[2]):
+            Z_true_j = Z_true[:,:,j]
+            if j == 0:
+                ax.plot(t_true, Z_true_j[:,i], color='blue', label='True')
+            else:
+                ax.plot(t_true, Z_true_j[:,i], color='blue', alpha=0.2)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel(axes_labels[i])
+        ax.set_title("Latent " + axes_titles[i])
+        ax.grid(True)
+        if i == 0:
+            ax.legend()
+    fig_z.suptitle(suptitle + " Latent States")
+    plt.tight_layout()
+
+    if save_path is not None:
+        fig_x.savefig(save_path+"_x.png")
+        fig_z.savefig(save_path+"_z.png")
 
 def print_theta(theta, save_path=None, title=None):
     """Prints the parameters in theta in a formatted way and saves them as tables."""
@@ -242,6 +360,107 @@ def plot_eig_stability(theta, title, save_path=None):
     plt.legend()
     plt.axis('equal')
     plt.grid(True)
+
+    if save_path is not None:
+        plt.savefig(save_path)
+        
+def plot_eig_stability_compare(theta_true, theta_learned, title, save_path=None):
+    A_true = theta_true.A
+    A_learned = theta_learned.A
+    eig_vals_true = np.linalg.eigvals(A_true)
+    eig_vals_learned = np.linalg.eigvals(A_learned)
+        
+    # Plot unit circle
+    theta_circle = np.linspace(0, 2*np.pi, 100)
+    x_circle = np.cos(theta_circle)
+    y_circle = np.sin(theta_circle)
+
+    plt.figure(figsize=(8, 8))
+    plt.plot(x_circle, y_circle, 'k--', alpha=0.5, label='Unit Circle')
+    plt.axhline(y=0, color='k', linestyle='-', alpha=0.3)
+    plt.axvline(x=0, color='k', linestyle='-', alpha=0.3)
+    
+    # Plot eigenvalues
+    plt.scatter(eig_vals_true.real, eig_vals_true.imag, color='blue', label='True Dynamics')
+    plt.scatter(eig_vals_learned.real, eig_vals_learned.imag, color='red', label='Learned Dynamics')
+    plt.xlabel("Real")
+    plt.ylabel("Imaginary")
+    plt.title(title)
+    plt.legend()
+    plt.axis('equal')
+    plt.grid(True)
+
+    if save_path is not None:
+        plt.savefig(save_path)
+
+def plot_eig_stability_compare_hist(theta_true, theta_learned_hist, title, save_path=None):
+    A_true = theta_true.A
+    eig_vals_true = np.linalg.eigvals(A_true)
+        
+    # Plot unit circle
+    theta_circle = np.linspace(0, 2*np.pi, 100)
+    x_circle = np.cos(theta_circle)
+    y_circle = np.sin(theta_circle)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.plot(x_circle, y_circle, 'k--', alpha=0.5, label='Unit Circle')
+    ax.axhline(y=0, color='k', linestyle='-', alpha=0.3)
+    ax.axvline(x=0, color='k', linestyle='-', alpha=0.3)
+    
+    # Limit to at most 200 theta values (excluding the final one which we plot separately)
+    max_thetas = 200
+    num_iterations = len(theta_learned_hist)
+    
+    if num_iterations > max_thetas + 1:  # +1 for the final theta we plot separately
+        # Create evenly spaced indices to sample from theta_learned_hist
+        # Exclude the last element which will be plotted separately
+        indices = np.linspace(0, num_iterations-2, max_thetas, dtype=int)
+        sampled_thetas = [theta_learned_hist[i] for i in indices]
+    else:
+        sampled_thetas = theta_learned_hist[:-1]
+    
+    # Create a colormap from dark red to light red
+    colors = plt.cm.Reds(np.linspace(0.3, 1.0, len(sampled_thetas)))
+    
+    # Plot eigenvalues with a color gradient (excluding the final theta)
+    for i, theta in enumerate(sampled_thetas):
+        A_learned = theta.A
+        eig_vals_learned = np.linalg.eigvals(A_learned)
+        ax.scatter(eig_vals_learned.real, eig_vals_learned.imag, 
+                  color=colors[i], 
+                  label='Learned Dynamics' if i == 0 else None)
+    
+    # Plot the final theta eigenvalues as stars
+    if len(theta_learned_hist) > 0:
+        A_final = theta_learned_hist[-1].A
+        eig_vals_final = np.linalg.eigvals(A_final)
+        ax.scatter(eig_vals_final.real, eig_vals_final.imag,
+                  color='pink', marker='*', s=200, label='Final Iteration',
+                  edgecolor='black', linewidth=0.5, zorder=10)
+    
+    # Plot true eigenvalues last so they're on top
+    ax.scatter(eig_vals_true.real, eig_vals_true.imag, 
+              color='blue', label='True Dynamics',
+              zorder=11)  # Higher zorder to appear on top
+    
+    # Add colorbar
+    norm = plt.Normalize(0, num_iterations-2)  # Use the original iteration count for the colorbar
+    sm = plt.cm.ScalarMappable(cmap=plt.cm.Reds, norm=norm)
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax)
+    cbar.set_label('Iteration')
+    
+    # Set custom ticks on colorbar for start, middle, and end iterations
+    if num_iterations > 2:
+        cbar.set_ticks([0, (num_iterations-2)/2, num_iterations-2])
+        cbar.set_ticklabels([0, num_iterations//2, num_iterations-2])
+    
+    ax.set_xlabel("Real")
+    ax.set_ylabel("Imaginary")
+    ax.set_title(title)
+    ax.legend()
+    ax.axis('equal')
+    ax.grid(True)
 
     if save_path is not None:
         plt.savefig(save_path)

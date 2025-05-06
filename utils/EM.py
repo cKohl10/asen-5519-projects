@@ -44,6 +44,36 @@ def kalman_filter(theta, X):
 
     return mu, V
 
+def kalman_filter_controlled(theta, X, U):
+
+    A = theta.A
+    B = theta.B
+    Gamma = theta.Gamma
+    C = theta.C
+    Sigma = theta.Sigma
+    mu0 = theta.mu0
+    V0 = theta.V0
+    N = theta.N
+    Ns = theta.Ns
+
+    V = np.zeros((N, Ns, Ns))
+    mu = np.zeros((N, Ns))
+    K1 = K(V0, C, Sigma)
+
+    # V[0] = V0
+    # mu[0] = mu0
+    V[0] = (np.eye(Ns) - K1 @ C) @ V0
+    mu[0] = mu0 + K1 @ (X[0] - C @ mu0)
+    
+    for n in range(1, N):
+        Pnm1 = P(V[n-1], A, Gamma)
+        Kn = K(Pnm1, C, Sigma)
+
+        mu[n] = A @ mu[n-1] + B @ U[n-1] +  Kn @ (X[n] - C @ A @ mu[n-1])
+        V[n] = (np.eye(Ns) - Kn @ C) @ Pnm1
+
+    return mu, V
+
 def kalman_filter_filterpy(theta, X):
     kf = KalmanFilter(dim_x=theta.Ns, dim_z=theta.Nx)
     kf.x = theta.mu0
@@ -78,6 +108,31 @@ def kalman_smoother(theta, X, mu, V):
         Pn = P(Vn, A, Gamma)
         Jn = J(Pn, Vn, A)
         mu_hat_rev = np.vstack((mu_hat_rev, mu_n + Jn @ (mu_hat_nm1 - A @ mu_n)))
+        V_hat_rev = np.vstack((V_hat_rev, [Vn + Jn @ (V_hat_rev[n-1] - Pn) @ Jn.T]))
+
+    V_hat = np.flip(V_hat_rev, axis=0)
+    mu_hat = np.flip(mu_hat_rev, axis=0)
+
+    return mu_hat, V_hat
+
+def kalman_smoother_controlled(theta, X, U, mu, V):
+    A = theta.A
+    B = theta.B
+    Gamma = theta.Gamma
+    N = theta.N
+    Ns = theta.Ns
+    mu_hat_rev = np.empty((0, Ns))
+    mu_hat_rev = np.vstack((mu_hat_rev, mu[N-1]))
+    V_hat_rev = np.empty((0, Ns, Ns)) # Reverse order of V
+    V_hat_rev = np.vstack((V_hat_rev, [V[N-1]]))   
+
+    for n in range(1, N):
+        mu_n = mu[N-n-1]
+        mu_hat_nm1 = mu_hat_rev[n-1]
+        Vn = V[N-n-1]
+        Pn = P(Vn, A, Gamma)
+        Jn = J(Pn, Vn, A)
+        mu_hat_rev = np.vstack((mu_hat_rev, mu_n + Jn @ (mu_hat_nm1 - (A @ mu_n + B @ U[n-1]))))
         V_hat_rev = np.vstack((V_hat_rev, [Vn + Jn @ (V_hat_rev[n-1] - Pn) @ Jn.T]))
 
     V_hat = np.flip(V_hat_rev, axis=0)
@@ -149,6 +204,30 @@ def get_A_new(theta, E2, E4, multi=False):
             E4_sum += np.sum(E4[k, :N-1], axis=0)
         return (E2_sum @ np.linalg.inv(E4_sum))
 
+def get_A_new_controlled(theta, E1, E2, E4, U, multi=False):
+    B, Ns, N, Nk = theta.B, theta.Ns, theta.N, theta.Nk
+
+    def single_traj(E1_s, E2_s, E4_s, U_s):
+        num = np.zeros((Ns, Ns))
+        den = np.zeros((Ns, Ns))
+        for n in range(1, N):
+            u = U_s[n-1][:, None]           # (Nu,1)
+            mu = E1_s[n-1][:, None]         # (Ns,1)
+            num += E2_s[n-1] - B @ u @ mu.T
+            den += E4_s[n-1]
+        return num, den
+
+    if not multi:
+        num, den = single_traj(E1, E2, E4, U)
+    else:
+        num = den = np.zeros((Ns, Ns))
+        for k in range(Nk):
+            n_k, d_k = single_traj(E1[k], E2[k], E4[k], U[:, :, k])
+            num += n_k
+            den += d_k
+    return num @ np.linalg.inv(den)
+
+
 def get_Gamma_new(theta, E2, E3, E4, A_new, multi=False):
     Ns = theta.Ns
     N = theta.N
@@ -168,6 +247,39 @@ def get_Gamma_new(theta, E2, E3, E4, A_new, multi=False):
                 elems = np.vstack((elems, [elems_n]))
             Gamma_k += np.sum(elems, axis=0)
         return Gamma_k / (Nk*(N-1))
+    
+def get_Gamma_new_controlled(theta, E1, E2, E3, E4, U, A_new, multi=False):
+    B, Ns, N, Nk = theta.B, theta.Ns, theta.N, theta.Nk
+
+    def single_traj(E1_s, E2_s, E3_s, E4_s, U_s):
+        Gamma_sum = np.zeros((Ns, Ns))
+        for n in range(1, N):
+            u = U_s[n-1][:, None]                   # (Nu,1)
+            mu_n   = E1_s[n][:, None]               # E[z_{n+1}]
+            mu_nm1 = E1_s[n-1][:, None]             # E[z_n]
+
+            term = (
+                E4_s[n]                                     # E[z_{n+1} z_{n+1}^T]
+                - A_new @ E3_s[n-1]                         # - A z_n z_{n+1}^T
+                - B @ u @ mu_n.T                            # - B u   z_{n+1}^T
+                - E2_s[n-1] @ A_new.T                       # transpose counterpart
+                - mu_n @ u.T @ B.T
+                + A_new @ E4_s[n-1] @ A_new.T               # + A z_n z_n^T A^T
+                + A_new @ mu_nm1 @ u.T @ B.T                # + A z_n u^T B^T
+                + B @ u @ mu_nm1.T @ A_new.T               # + B u z_n^T A^T
+                + B @ u @ u.T @ B.T                         # + B u u^T B^T
+            )
+            Gamma_sum += term
+        return Gamma_sum
+
+    if not multi:
+        Gamma_sum = single_traj(E1, E2, E3, E4, U)
+        return Gamma_sum / (N - 1)
+    else:
+        Gamma_accum = np.zeros((Ns, Ns))
+        for k in range(Nk):
+            Gamma_accum += single_traj(E1[k], E2[k], E3[k], E4[k], U[:, :, k])
+        return Gamma_accum / (Nk * (N - 1))
 
 
 def get_C_new_former(theta, E1, X_k):
@@ -256,6 +368,22 @@ def maximization_multi(theta, X, E1, E2, E3, E4):
 
     return theta_new    
 
+def maximization_multi_controlled(theta, X, E1, E2, E3, E4, U):
+
+    theta_new = theta.copy()
+    theta_new.mu0 = get_mu0_new(theta, E1, multi=True)
+    theta_new.V0 = get_V0_new(theta, E1, E4, multi=True)
+
+    A_new = get_A_new_controlled(theta, E1, E2, E4, U, multi=True)
+    theta_new.A = A_new
+    theta_new.Gamma = get_Gamma_new_controlled(theta, E1, E2, E3, E4, U, A_new, multi=True)
+
+    C_new = get_C_new(theta, E1, E4, X, multi=True)
+    theta_new.C = C_new
+    theta_new.Sigma = get_Sigma_new(theta, E1, E4, C_new, X, multi=True)
+
+    return theta_new    
+
 ## --- Calculate Q ---
 def calculate_Q(theta_old, X, E1, E2, E4):
     A = theta_old.A
@@ -308,13 +436,11 @@ def calculate_Q_multi(theta, X, E1, E2, E3, E4):
         Q_sum += calculate_Q(theta, X[:,:,k], E1[k], E2[k], E4[k])
     return Q_sum / Nk
 
-def train_EM_single(data, opt):
+def train_EM_single(theta, X, opt):
     max_iter = opt["max_iter"]
     tol = opt["tol"]
 
     # Initialize parameters
-    X = data["X_set"][:,:,0] # [N, Nx]
-    theta = initialize_params(data)
 
     Q_hist = []
     theta_hist = []
@@ -361,7 +487,9 @@ def train_EM_multi(theta, data, opt):
     Ns = theta.Ns # Number of hidden states 
     Q_hist = []
     theta_hist = []
-    
+    X = data["X_set"]
+    U = data["U_set"]
+
     for j in range(max_iter):
 
         try:
@@ -373,10 +501,14 @@ def train_EM_multi(theta, data, opt):
 
             # Calculate E1, E2, E3, E4 for each trajectory
             for k in range(Nk):
-                X_k = data["X_set"][:,:,k]
-                mu_k, V_k = kalman_filter(theta, X_k)
-                mu_hat_k, V_hat_k = kalman_smoother(theta, X_k, mu_k, V_k)
+                X_k = X[:,:,k]
+                U_k = data["U_set"][:,:,k]
+                mu_k, V_k = kalman_filter_controlled(theta, X_k, U_k)
+                mu_hat_k, V_hat_k = kalman_smoother_controlled(theta, X_k, U_k, mu_k, V_k)
+                # mu_k, V_k = kalman_filter(theta, X_k)
+                # mu_hat_k, V_hat_k = kalman_smoother(theta, X_k, mu_k, V_k)
 
+                # Calculate E1, E2, E3, E4 for each trajectory
                 E1_k = get_E1(mu_hat_k)
                 E2_k, E3_k = get_E2_E3(theta, V_k, mu_hat_k, V_hat_k)
                 E4_k = get_E4(theta, mu_hat_k, V_hat_k)
@@ -386,9 +518,9 @@ def train_EM_multi(theta, data, opt):
                 E3 = np.vstack((E3, [E3_k]))
                 E4 = np.vstack((E4, [E4_k]))
 
-            X = data["X_set"]
             # Take a summed Maximization step
             theta_new = maximization_multi(theta, X, E1, E2, E3, E4)
+            # theta_new = maximization_multi_controlled(theta, X, E1, E2, E3, E4, U)
 
             # Calculate Q
             Q = calculate_Q_multi(theta, X, E1, E2, E3, E4)
