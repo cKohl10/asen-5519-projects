@@ -1,5 +1,8 @@
 # asen-5519-projects
 Final projects for Bayesian reasoning
 
-## Generate dataset for spring mass damper
-`python train_EM.py`
+## Train the spring mass damper with EM
+`python train_spring_mass.py`
+
+## Train the dubin's car with GP
+`python NonlinearV3.py`
